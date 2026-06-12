@@ -3,8 +3,8 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "build": "tsup src/index.ts --format cjs --out-dir dist --platform node --dts --clean",
-    "typecheck": "tsc --noEmit",
+    "build": "tsup",
+    "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js"

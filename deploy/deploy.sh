@@ -5,7 +5,6 @@ set -euo pipefail
 
 HOST="${1:-mini-canterbury}"
 TS="$(date -u +%Y%m%dT%H%M%S)"
-RELEASE_DIR="/home/brian/releases/$TS"
 
 echo "==> Gate: typecheck + test"
 pnpm typecheck
@@ -14,38 +13,59 @@ pnpm test
 echo "==> Build"
 pnpm build
 
+echo "==> Stage"
+# Create a clean deploy layout that matches the systemd unit:
+#   current/server/index.js        <- built server bundle (tsup CJS)
+#   current/server/package.json    <- prod deps manifest (workspace dep stripped)
+#   current/web/                   <- static PWA files
+STAGE=$(mktemp -d)
+trap 'rm -rf "$STAGE"' EXIT
+
+mkdir -p "$STAGE/server" "$STAGE/web"
+
+cp packages/server/dist/index.js "$STAGE/server/"
+cp -r packages/web/dist/. "$STAGE/web/"
+
+# Strip the workspace dep (@tenon/core is bundled into index.js by tsup) and devDeps
+# so `npm install --omit=dev` on the target only installs native runtime modules.
+node -e "
+  const fs = require('fs');
+  const pkg = JSON.parse(fs.readFileSync('packages/server/package.json', 'utf8'));
+  delete pkg.dependencies['@tenon/core'];
+  delete pkg.devDependencies;
+  delete pkg.scripts;
+  fs.writeFileSync('$STAGE/server/package.json', JSON.stringify(pkg, null, 2));
+"
+
 echo "==> Package"
-tar czf tenon.tar.gz \
-  packages/server/dist/ \
-  packages/web/dist/ \
-  package.json \
-  pnpm-workspace.yaml \
-  packages/server/package.json \
-  packages/core/package.json \
-  packages/web/package.json
+tar czf tenon.tar.gz -C "$STAGE" .
 
-echo "==> Ship to $HOST ($RELEASE_DIR)"
-ssh "$HOST" "mkdir -p $RELEASE_DIR"
-scp tenon.tar.gz "$HOST:$RELEASE_DIR/"
+echo "==> Ship to $HOST ($TS)"
+ssh "$HOST" "mkdir -p ~/releases/$TS"
+scp tenon.tar.gz "$HOST:~/releases/$TS/"
 
-ssh "$HOST" bash -s <<EOF
-  set -euo pipefail
-  cd "$RELEASE_DIR"
-  tar xzf tenon.tar.gz
-  rm tenon.tar.gz
+ssh "$HOST" bash <<REMOTE
+set -euo pipefail
 
-  # Install production deps (server only; web is static)
-  cd packages/server && npm install --omit=dev --legacy-peer-deps 2>/dev/null || true
-  cd /home/brian
+cd ~/releases/$TS
+tar xzf tenon.tar.gz && rm tenon.tar.gz
 
-  ln -sfn "$RELEASE_DIR" /home/brian/current
-  systemctl restart tenon
-  sleep 2
-  systemctl is-active --quiet tenon && echo "tenon is running" || { echo "tenon failed to start"; journalctl -u tenon -n 30; exit 1; }
+# Install prod native deps (express, better-sqlite3, sharp, etc.)
+# @tenon/core is already bundled into server/index.js — not needed here.
+cd server
+npm install --omit=dev
+cd ~
 
-  # Prune old releases (keep last 5)
-  ls -dt /home/brian/releases/*/ | tail -n +6 | xargs -r rm -rf
-EOF
+ln -sfn ~/releases/$TS ~/current
+systemctl restart tenon
+sleep 2
+systemctl is-active --quiet tenon \
+  && echo "tenon running" \
+  || { echo "tenon failed to start:"; journalctl -u tenon -n 30; exit 1; }
+
+# Prune old releases, keep last 5
+ls -dt ~/releases/*/ | tail -n +6 | xargs -r rm -rf
+REMOTE
 
 rm -f tenon.tar.gz
 echo "==> Deployed $TS"
@@ -57,10 +77,7 @@ echo "==> Deployed $TS"
 #    curl https://get.volta.sh | bash
 #    volta install node@22
 #
-# 2. Install pnpm:
-#    volta install pnpm@9
-#
-# 3. Create env file:
+# 2. Create env file:
 #    sudo mkdir -p /etc/tenon
 #    sudo tee /etc/tenon/env <<'ENVEOF'
 #    PORT=3000
@@ -69,19 +86,19 @@ echo "==> Deployed $TS"
 #    NODE_ENV=production
 #    ENVEOF
 #
-# 4. Install systemd unit:
+# 3. Install systemd unit:
 #    sudo cp deploy/tenon.service /etc/systemd/system/tenon.service
 #    sudo systemctl daemon-reload
 #    sudo systemctl enable tenon
 #
-# 5. Tailscale TLS (required for PWA install, camera, service worker):
+# 4. Tailscale TLS (required for PWA install, camera, service worker):
 #    sudo tailscale cert mini-canterbury.<tailnet>.ts.net
-#    # Certs land in /etc/ssl/tailscale/ — configure server to use them (chunk 3)
+#    # Certs land at /var/lib/tailscale/certs/ — configure server to use them (chunk 3)
 #
-# 6. Tailscale Funnel for /mcp (Claude.ai connects from outside the tailnet):
+# 5. Tailscale Funnel for /mcp (Claude.ai is outside the tailnet):
 #    tailscale funnel --bg 443
-#    # /mcp route requires Bearer token auth (MCP_BEARER_TOKEN) — see chunk 4
+#    # Bearer auth enforced in server middleware (chunk 4)
 #
-# 7. REST API stays on tailscale serve (tailnet-only):
+# 6. REST API stays tailnet-only via tailscale serve:
 #    tailscale serve --bg 3000
 # ---------------------------------------------------------------------------

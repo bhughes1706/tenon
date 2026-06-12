@@ -27,6 +27,8 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
+        # tsc -b --noEmit traverses project references: builds core's .d.ts first,
+        # then type-checks server and web without emitting their own JS.
         run: pnpm typecheck
 
       - name: Test

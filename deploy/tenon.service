@@ -6,14 +6,16 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=brian
-ExecStart=/home/brian/.volta/bin/node /home/brian/current/server/dist/index.js
+ExecStart=/home/brian/.volta/bin/node /home/brian/current/server/index.js
 Restart=always
 RestartSec=5
 EnvironmentFile=/etc/tenon/env
 
-# DATA_DIR, PORT, MCP_BEARER_TOKEN are set in /etc/tenon/env
-# Generate MCP_BEARER_TOKEN with: openssl rand -hex 32
-# Set DATA_DIR=/home/brian/data (gitignored; backed up via Litestream + restic)
+# /etc/tenon/env must define:
+#   PORT=3000
+#   DATA_DIR=/home/brian/data
+#   MCP_BEARER_TOKEN=<openssl rand -hex 32>
+#   NODE_ENV=production
 
 StandardOutput=journal
 StandardError=journal

@@ -17,6 +17,9 @@ packages/web/.vite/
 # pnpm
 .pnpm-store/
 
+# TypeScript incremental build cache
+*.tsbuildinfo
+
 # Build artifacts
 *.tgz
 tenon.tar.gz
