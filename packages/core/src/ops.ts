@@ -1,119 +1,135 @@
 import { z } from 'zod'
-import { BoardSchema, BoardDimsSchema, BoardTransformSchema } from './board.js'
-import {
-  ButtParamsSchema,
-  RabbetParamsSchema,
-  HousingParamsSchema,
-  HalfLapParamsSchema,
-  BridleParamsSchema,
-  MortiseTennonParamsSchema,
-  BoxJointParamsSchema,
-  DovetailParamsSchema,
-  MiterParamsSchema,
-} from './joint.js'
+import { idSchema } from './ids.js'
+import { BoardSchema, BoardTransformSchema } from './board.js'
+import { jointVariants } from './joint.js'
 
-// ── Board input (id optional — server assigns on add_board) ──────────────────
-const BoardInputSchema = BoardSchema.extend({ id: z.string().optional() })
+// ── Board input / patch ──────────────────────────────────────────────────────
 
-// ── Board patch (update_board) ───────────────────────────────────────────────
-// Partial of all board fields except id (which is the lookup key).
-const BoardPatchSchema = BoardSchema.omit({ id: true }).partial()
+// id optional — server assigns when omitted (§4.1)
+export const BoardInputSchema = BoardSchema.extend({ id: idSchema('brd_').optional() })
+export type BoardInput = z.infer<typeof BoardInputSchema>
 
-// ── Joint input (id optional — server assigns on add_joint) ─────────────────
-// Mirrors JointSchema but with optional id; params validated per-type.
-const jointInputBase = z.object({
-  id: z.string().optional(),
-  a: z.string(),
-  b: z.string(),
-  enabled: z.boolean().default(true),
-})
-const JointInputSchema = z.discriminatedUnion('type', [
-  jointInputBase.extend({ type: z.literal('butt'),          params: ButtParamsSchema }),
-  jointInputBase.extend({ type: z.literal('rabbet'),        params: RabbetParamsSchema }),
-  jointInputBase.extend({ type: z.literal('housing'),       params: HousingParamsSchema }),
-  jointInputBase.extend({ type: z.literal('half_lap'),      params: HalfLapParamsSchema }),
-  jointInputBase.extend({ type: z.literal('bridle'),        params: BridleParamsSchema }),
-  jointInputBase.extend({ type: z.literal('mortise_tenon'), params: MortiseTennonParamsSchema }),
-  jointInputBase.extend({ type: z.literal('box_joint'),     params: BoxJointParamsSchema }),
-  jointInputBase.extend({ type: z.literal('dovetail'),      params: DovetailParamsSchema }),
-  jointInputBase.extend({ type: z.literal('miter'),         params: MiterParamsSchema }),
-])
+// Every board field is patchable except id. This is also the only channel for
+// editing edge_grooves and glue_up — there are no dedicated ops for them (§4.1).
+export const BoardPatchSchema = BoardSchema.omit({ id: true }).partial()
+export type BoardPatch = z.infer<typeof BoardPatchSchema>
 
-// ── Joint patch (update_joint — params/enabled only) ────────────────────────
-// params is untyped here; type-specific param validation runs at evaluation.
-const JointPatchSchema = z.object({
-  params: z.record(z.unknown()).optional(),
-  enabled: z.boolean().optional(),
-})
+// ── Joint input / patch ──────────────────────────────────────────────────────
+
+const jointInputBase = z
+  .object({
+    id: idSchema('jnt_').optional(), // server assigns when omitted
+    a: idSchema('brd_'),
+    b: idSchema('brd_'),
+    enabled: z.boolean().default(true),
+  })
+  .strict()
+
+export const JointInputSchema = z.discriminatedUnion('type', [...jointVariants(jointInputBase)])
+export type JointInput = z.infer<typeof JointInputSchema>
+
+// params is shape-checked only at this level; per-joint-type validation happens
+// in validateOps, which can look up the target joint's type in the model.
+export const JointPatchSchema = z
+  .object({
+    params: z.record(z.unknown()).optional(),
+    enabled: z.boolean().optional(),
+  })
+  .strict()
+export type JointPatch = z.infer<typeof JointPatchSchema>
 
 // ── Op schemas (§4.1) ────────────────────────────────────────────────────────
 
-const AddBoardOpSchema = z.object({
-  op: z.literal('add_board'),
-  board: BoardInputSchema,
-})
+const AddBoardOpSchema = z
+  .object({
+    op: z.literal('add_board'),
+    board: BoardInputSchema,
+  })
+  .strict()
 
-const UpdateBoardOpSchema = z.object({
-  op: z.literal('update_board'),
-  id: z.string(),
-  patch: BoardPatchSchema,
-})
+const UpdateBoardOpSchema = z
+  .object({
+    op: z.literal('update_board'),
+    id: idSchema('brd_'),
+    patch: BoardPatchSchema,
+  })
+  .strict()
 
 // Hot path — separated from update_board for undo granularity (§4.1)
-const TransformBoardOpSchema = z.object({
-  op: z.literal('transform_board'),
-  id: z.string(),
-  pos: BoardTransformSchema.shape.pos.optional(),
-  rot: BoardTransformSchema.shape.rot.optional(),
-})
+const TransformBoardOpSchema = z
+  .object({
+    op: z.literal('transform_board'),
+    id: idSchema('brd_'),
+    pos: BoardTransformSchema.shape.pos.optional(),
+    rot: BoardTransformSchema.shape.rot.optional(),
+  })
+  .strict()
 
-const DuplicateBoardOpSchema = z.object({
-  op: z.literal('duplicate_board'),
-  id: z.string(),
-  offset: z.tuple([z.number(), z.number(), z.number()]),
-  mirror: z.enum(['x', 'y', 'z']).optional(),
-})
+const DuplicateBoardOpSchema = z
+  .object({
+    op: z.literal('duplicate_board'),
+    id: idSchema('brd_'),
+    offset: z.tuple([z.number(), z.number(), z.number()]),
+    mirror: z.enum(['x', 'y', 'z']).optional(), // for left/right parts
+  })
+  .strict()
 
-const RemoveBoardOpSchema = z.object({
-  op: z.literal('remove_board'),
-  id: z.string(),
-})
+const RemoveBoardOpSchema = z
+  .object({
+    op: z.literal('remove_board'), // cascades: removes joints referencing it (§4.1)
+    id: idSchema('brd_'),
+  })
+  .strict()
 
-const AddJointOpSchema = z.object({
-  op: z.literal('add_joint'),
-  joint: JointInputSchema,
-})
+const AddJointOpSchema = z
+  .object({
+    op: z.literal('add_joint'),
+    joint: JointInputSchema,
+  })
+  .strict()
 
-const UpdateJointOpSchema = z.object({
-  op: z.literal('update_joint'),
-  id: z.string(),
-  patch: JointPatchSchema,
-})
+const UpdateJointOpSchema = z
+  .object({
+    op: z.literal('update_joint'),
+    id: idSchema('jnt_'),
+    patch: JointPatchSchema,
+  })
+  .strict()
 
-const RemoveJointOpSchema = z.object({
-  op: z.literal('remove_joint'),
-  id: z.string(),
-})
+const RemoveJointOpSchema = z
+  .object({
+    op: z.literal('remove_joint'),
+    id: idSchema('jnt_'),
+  })
+  .strict()
 
-const GroupOpSchema = z.object({
-  op: z.literal('group'),
-  member_ids: z.array(z.string()).min(2),
-  name: z.string().optional(),
-  id: z.string().optional(),  // server assigns if omitted
-})
-
-const UngroupOpSchema = z.object({
-  op: z.literal('ungroup'),
-  group_id: z.string(),
-})
-
-const SetModelMetaOpSchema = z.object({
-  op: z.literal('set_model_meta'),
-  patch: z.object({
+const GroupOpSchema = z
+  .object({
+    op: z.literal('group'),
+    member_ids: z.array(idSchema('brd_')).min(2),
     name: z.string().optional(),
-    notes: z.string().optional(),
-  }),
-})
+    id: idSchema('grp_').optional(), // server assigns when omitted
+  })
+  .strict()
+
+const UngroupOpSchema = z
+  .object({
+    op: z.literal('ungroup'),
+    group_id: idSchema('grp_'),
+  })
+  .strict()
+
+const SetModelMetaOpSchema = z
+  .object({
+    op: z.literal('set_model_meta'),
+    patch: z
+      .object({
+        name: z.string().optional(),
+        notes: z.string().optional(),
+      })
+      .strict(),
+  })
+  .strict()
 
 // ── Union ────────────────────────────────────────────────────────────────────
 
@@ -133,21 +149,23 @@ export const OpSchema = z.discriminatedUnion('op', [
 export type Op = z.infer<typeof OpSchema>
 
 // Individual op types — useful for exhaustive switch branches
-export type AddBoardOp      = z.infer<typeof AddBoardOpSchema>
-export type UpdateBoardOp   = z.infer<typeof UpdateBoardOpSchema>
+export type AddBoardOp = z.infer<typeof AddBoardOpSchema>
+export type UpdateBoardOp = z.infer<typeof UpdateBoardOpSchema>
 export type TransformBoardOp = z.infer<typeof TransformBoardOpSchema>
 export type DuplicateBoardOp = z.infer<typeof DuplicateBoardOpSchema>
-export type RemoveBoardOp   = z.infer<typeof RemoveBoardOpSchema>
-export type AddJointOp      = z.infer<typeof AddJointOpSchema>
-export type UpdateJointOp   = z.infer<typeof UpdateJointOpSchema>
-export type RemoveJointOp   = z.infer<typeof RemoveJointOpSchema>
-export type GroupOp         = z.infer<typeof GroupOpSchema>
-export type UngroupOp       = z.infer<typeof UngroupOpSchema>
-export type SetModelMetaOp  = z.infer<typeof SetModelMetaOpSchema>
+export type RemoveBoardOp = z.infer<typeof RemoveBoardOpSchema>
+export type AddJointOp = z.infer<typeof AddJointOpSchema>
+export type UpdateJointOp = z.infer<typeof UpdateJointOpSchema>
+export type RemoveJointOp = z.infer<typeof RemoveJointOpSchema>
+export type GroupOp = z.infer<typeof GroupOpSchema>
+export type UngroupOp = z.infer<typeof UngroupOpSchema>
+export type SetModelMetaOp = z.infer<typeof SetModelMetaOpSchema>
 
-// §4.2: ops endpoint request body
-export const ApplyOpsRequestSchema = z.object({
-  expected_rev: z.number().int().nonnegative(),
-  ops: z.array(OpSchema).min(1),
-})
+// §4.2: ops endpoint request body — shared by REST and apply_model_ops (MCP)
+export const ApplyOpsRequestSchema = z
+  .object({
+    expected_rev: z.number().int().nonnegative(),
+    ops: z.array(OpSchema).min(1),
+  })
+  .strict()
 export type ApplyOpsRequest = z.infer<typeof ApplyOpsRequestSchema>

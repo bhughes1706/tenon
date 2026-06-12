@@ -11,7 +11,9 @@ export const WarningCode = {
 export type WarningCode = (typeof WarningCode)[keyof typeof WarningCode]
 
 export type Warning = {
-  code: WarningCode | string
+  // (string & {}) keeps autocomplete for the known codes while allowing
+  // forward-compatible codes from later chunks
+  code: WarningCode | (string & {})
   boards?: string[]
   joints?: string[]
   msg: string
