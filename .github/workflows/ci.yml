@@ -27,8 +27,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
-        # tsc -b --noEmit traverses project references: builds core's .d.ts first,
-        # then type-checks server and web without emitting their own JS.
+        # tsc -b --noEmit propagates --noEmit into composite referenced projects (TS6310)
+        # in TypeScript 5.7. Workaround: build core first (creates .d.ts), then typecheck
+        # server and web with plain tsc --noEmit (non-build mode, no reference propagation).
         run: pnpm typecheck
 
       - name: Test
