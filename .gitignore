@@ -1,0 +1,26 @@
+node_modules/
+dist/
+.env
+*.local
+
+# data dir (sqlite db + photos) — backed up separately
+data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Vite
+packages/web/dist/
+packages/web/.vite/
+
+# pnpm
+.pnpm-store/
+
+# Build artifacts
+*.tgz
+tenon.tar.gz
+releases/
+
+# Tailscale certs (contain private key)
+*.pem

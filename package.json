@@ -1,0 +1,19 @@
+{
+  "name": "tenon",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=9"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "dev:server": "pnpm --filter @tenon/server dev",
+    "dev:web": "pnpm --filter @tenon/web dev"
+  },
+  "devDependencies": {
+    "typescript": "~5.7.3"
+  }
+}
