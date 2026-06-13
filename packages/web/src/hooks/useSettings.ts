@@ -65,6 +65,10 @@ export function useSettings() {
 
   const update = useCallback(async (patch: Partial<Settings>) => {
     setError(null)
+    // Snapshot before the optimistic apply. Safe for sequential updates; two
+    // concurrent un-awaited calls both capture the same prev, so the first
+    // success can be rolled back by a later failure. Acceptable for a settings
+    // panel where concurrent writes don't happen in practice.
     const prev = settings
     // Optimistic update
     setSettings(s => s ? { ...s, ...patch } : null)

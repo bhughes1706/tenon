@@ -60,8 +60,10 @@
 }
 
 /* ── Base ─────────────────────────────────────────────────────────────────── */
-/* Fallback so <html> is readable if data-theme is missing (JS blocked, etc.) */
-:root {
+/* Fallback so <html> is readable if data-theme is missing (JS blocked, etc.).
+   Must be scoped to :not([data-theme]) so specificity never fights the theme
+   blocks — :root and [data-theme] are equal (0,1,0), source order would win. */
+html:not([data-theme]) {
   --surface: #f9f8f6;
   --text: #1a1612;
 }
