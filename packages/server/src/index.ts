@@ -1,18 +1,59 @@
 import express from 'express'
+import path from 'path'
 import pino from 'pino'
+import { openDb } from './db.js'
+import { makePhotosRouter } from './routes/photos.js'
+import clientsRouter from './routes/clients.js'
+import jobsRouter from './routes/jobs.js'
+import modelsRouter from './routes/models.js'
+import hardwareRouter from './routes/hardware.js'
+import settingsRouter from './routes/settings.js'
+import speciesRouter from './routes/species.js'
+import timeLogsRouter from './routes/timeLogs.js'
+import notesRouter from './routes/notes.js'
+import eventsRouter from './routes/events.js'
 
-const log = pino({ level: process.env.LOG_LEVEL ?? 'info' })
+const log = pino({
+  level: process.env.LOG_LEVEL ?? 'info',
+  transport: process.env.NODE_ENV !== 'production' ? { target: 'pino-pretty' } : undefined,
+})
+
 const port = Number(process.env.PORT ?? 3000)
+const dataDir = path.resolve(process.env.DATA_DIR ?? path.join(__dirname, '../../data'))
+
+// Initialize DB and run pending migrations before accepting traffic
+openDb(dataDir)
+log.info({ dataDir }, 'database ready')
 
 const app = express()
 app.use(express.json({ limit: '1mb' }))
 
+// Disable "X-Powered-By: Express" header
+app.disable('x-powered-by')
+
+// ── Health ────────────────────────────────────────────────────────────────────
 app.get('/healthz', (_req, res) => {
   res.json({ ok: true, version: process.env.npm_package_version ?? '0.0.1' })
 })
 
-// Chunk 3: SQLite migrations + REST skeleton
-// Chunk 4: MCP stub + photo pipeline + bearer auth
+// ── REST API (/api/*) — tailscale serve, tailnet-only (§10) ──────────────────
+app.use('/api/clients', clientsRouter)
+app.use('/api/jobs', jobsRouter)
+app.use('/api/models', modelsRouter)
+app.use('/api/settings', settingsRouter)
+app.use('/api/species', speciesRouter)
+app.use('/api/time_logs', timeLogsRouter)
+app.use('/api/notes', notesRouter)
+app.use('/api/events', eventsRouter)
+
+// Photo routes span two path patterns (/api/jobs/:id/photos and /api/photos/:id)
+// so they're wired at /api rather than a sub-router prefix
+app.use('/api', makePhotosRouter(dataDir))
+
+// Hardware similarly spans /api/jobs/:id/hardware and /api/hardware/:id
+app.use('/api', hardwareRouter)
+
+// Chunk 4: /mcp with bearer auth + rate limiting
 // Chunk 13: apply_model_ops, get_model, validate_model MCP tools
 
 app.listen(port, () => {
