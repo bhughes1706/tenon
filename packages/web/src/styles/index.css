@@ -56,10 +56,16 @@
   /* Motion → duration-fast, duration-base, ease-out */
   --duration-fast: 80ms;
   --duration-base: 160ms;
-  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
 }
 
 /* ── Base ─────────────────────────────────────────────────────────────────── */
+/* Fallback so <html> is readable if data-theme is missing (JS blocked, etc.) */
+:root {
+  --surface: #f9f8f6;
+  --text: #1a1612;
+}
+
 html {
   font-size: var(--text-base);
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;

@@ -20,7 +20,7 @@ function SegmentedControl<T extends string>({
       borderRadius: 'var(--radius-m)',
       overflow: 'hidden',
     }}>
-      {options.map(opt => (
+      {options.map((opt, idx) => (
         <button
           key={opt.value}
           onClick={() => onChange(opt.value)}
@@ -29,7 +29,7 @@ function SegmentedControl<T extends string>({
             padding: '0 var(--sp-3)',
             height: 'var(--btn-height-comfortable)',
             border: 'none',
-            borderRight: '1px solid var(--border)',
+            borderRight: idx < options.length - 1 ? '1px solid var(--border)' : 'none',
             cursor: disabled ? 'not-allowed' : 'pointer',
             fontSize: 'var(--text-sm)',
             background: value === opt.value ? 'var(--accent)' : 'var(--surface)',

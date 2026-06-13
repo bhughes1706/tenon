@@ -54,7 +54,10 @@
   /* Motion */
   --dur-fast: 80ms;
   --dur-base: 160ms;
-  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  /* Aliases for Tailwind v4 @theme names (duration-fast, duration-base) */
+  --duration-fast: var(--dur-fast);
+  --duration-base: var(--dur-base);
 }
 
 /* ── Layer 2 — Semantic aliases (§20.1) ───────────────────────────────────── */

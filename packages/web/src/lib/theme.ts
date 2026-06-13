@@ -39,10 +39,18 @@ const LS_DENSITY_KEY = 'tenon:density'
 // Bootstrap: apply from localStorage immediately (avoids FOUC), then the
 // useSettings hook fetches from the server and calls applyTheme again.
 export function initTheme(): void {
-  const theme = (localStorage.getItem(LS_THEME_KEY) ?? 'system') as ThemeValue
-  const density = (localStorage.getItem(LS_DENSITY_KEY) ?? 'comfortable') as DensityValue
+  const theme = parseStoredTheme(localStorage.getItem(LS_THEME_KEY))
+  const density = parseStoredDensity(localStorage.getItem(LS_DENSITY_KEY))
   applyTheme(theme, density)
   listenSystemTheme(theme, density)
+}
+
+export function parseStoredTheme(raw: string | null): ThemeValue {
+  return raw === 'light' || raw === 'dark' || raw === 'system' ? raw : 'system'
+}
+
+export function parseStoredDensity(raw: string | null): DensityValue {
+  return raw === 'comfortable' || raw === 'shop' ? raw : 'comfortable'
 }
 
 export function persistThemeLocally(theme: ThemeValue, density: DensityValue): void {
