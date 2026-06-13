@@ -1,0 +1,151 @@
+/* ── Layer 1 — Primitives (§20.1) ─────────────────────────────────────────── */
+/* Values are defined in the @theme block in index.css (one source of truth).  */
+/* These aliases expose them under the spec's --gray-* / --oak-* names so that */
+/* Layer 2 selectors match the spec exactly.                                    */
+:root {
+  /* Gray scale */
+  --gray-0:   #ffffff;
+  --gray-50:  #f9f8f6;
+  --gray-100: #f0ede8;
+  --gray-200: #e0dbd3;
+  --gray-300: #c8c2b8;
+  --gray-400: #a09890;
+  --gray-500: #787068;
+  --gray-600: #5a5248;
+  --gray-700: #3d3830;
+  --gray-800: #28231e;
+  --gray-900: #1a1612;
+  --gray-950: #100e0b;
+
+  /* Brand warm (oak) */
+  --oak-100: #f5e6cc;
+  --oak-300: #c8914a;
+  --oak-500: #9a6420;
+  --oak-700: #5c3a0e;
+
+  /* Semantic status */
+  --red-500:   #d63b2f;
+  --amber-500: #c27d18;
+  --green-500: #2e7d52;
+  --blue-500:  #2563a8;
+
+  /* Spacing (4px base) */
+  --sp-1:  4px;
+  --sp-2:  8px;
+  --sp-3:  12px;
+  --sp-4:  16px;
+  --sp-6:  24px;
+  --sp-8:  32px;
+  --sp-12: 48px;
+
+  /* Type scale */
+  --text-xs:   11px;
+  --text-sm:   13px;
+  --text-base: 14px;
+  --text-md:   16px;
+  --text-lg:   18px;
+  --text-xl:   22px;
+
+  /* Radii */
+  --radius-s: 4px;
+  --radius-m: 6px;
+  --radius-l: 10px;
+
+  /* Motion */
+  --dur-fast: 80ms;
+  --dur-base: 160ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* ── Layer 2 — Semantic aliases (§20.1) ───────────────────────────────────── */
+/* data-theme is set on <html> by theme.ts. Components reference only these.  */
+[data-theme="light"] {
+  /* Surfaces */
+  --surface:         var(--gray-0);
+  --surface-raised:  var(--gray-0);
+  --surface-sunken:  var(--gray-50);
+  --surface-overlay: var(--gray-0);
+
+  /* Text */
+  --text:            var(--gray-900);
+  --text-muted:      var(--gray-600);
+  --text-faint:      var(--gray-400);
+  --text-on-accent:  var(--gray-0);
+
+  /* Borders */
+  --border:          var(--gray-200);
+  --border-strong:   var(--gray-300);
+
+  /* Accent + states */
+  --accent:          var(--oak-500);
+  --accent-subtle:   var(--oak-100);
+  --danger:          var(--red-500);
+  --warn:            var(--amber-500);
+  --ok:              var(--green-500);
+  --info:            var(--blue-500);
+  --focus-ring:      var(--oak-300);
+
+  /* Viewport overlays — UI only; wood materials are never themed */
+  --vp-bg:         #f4f1ec;
+  --vp-grid-major: rgba(0, 0, 0, 0.12);
+  --vp-grid-minor: rgba(0, 0, 0, 0.05);
+  --vp-selection:  #2563a8;
+  --vp-hover:      rgba(37, 99, 168, 0.35);
+  --vp-collision:  #d63b2f;
+  --vp-joint-hi:   #c27d18;
+  --vp-ghost:      rgba(37, 99, 168, 0.18);
+  --vp-measure:    #2e7d52;
+}
+
+[data-theme="dark"] {
+  --surface:         var(--gray-900);
+  --surface-raised:  var(--gray-800);
+  --surface-sunken:  var(--gray-950);
+  --surface-overlay: var(--gray-800);
+  --text:            var(--gray-50);
+  --text-muted:      var(--gray-400);
+  --text-faint:      var(--gray-600);
+  --text-on-accent:  var(--gray-0);
+  --border:          var(--gray-700);
+  --border-strong:   var(--gray-600);
+  --accent:          var(--oak-300);
+  --accent-subtle:   rgba(155, 100, 50, 0.18);
+  --danger:          #e05a50;
+  --warn:            #d4943a;
+  --ok:              #4caf7d;
+  --info:            #4d8fd4;
+  --focus-ring:      var(--oak-300);
+
+  --vp-bg:         #1c1a17;
+  --vp-grid-major: rgba(255, 255, 255, 0.10);
+  --vp-grid-minor: rgba(255, 255, 255, 0.04);
+  --vp-selection:  #4d8fd4;
+  --vp-hover:      rgba(77, 143, 212, 0.30);
+  --vp-collision:  #e05a50;
+  --vp-joint-hi:   #d4943a;
+  --vp-ghost:      rgba(77, 143, 212, 0.15);
+  --vp-measure:    #4caf7d;
+}
+
+/* ── Layer 3 — Component tokens (§20.1) ───────────────────────────────────── */
+:root {
+  --inspector-width:        300px;
+  --rail-width:             48px;
+  --status-height:          28px;
+  --topbar-height:          40px;
+  --btn-height-comfortable: 32px;
+  --btn-height-shop:        44px;
+  --text-base-comfortable:  var(--text-base);
+  --text-base-shop:         var(--text-md);
+  --row-height-comfortable: 40px;
+  --row-height-shop:        52px;
+}
+
+/* ── Density overrides (§20.2) ───────────────────────────────────────────── */
+/* data-density="shop" on <html> bumps hit targets and text via Layer 3 vars. */
+[data-density="shop"] {
+  --btn-height-comfortable: var(--btn-height-shop);
+  --text-base-comfortable:  var(--text-base-shop);
+  --row-height-comfortable: var(--row-height-shop);
+  font-size: var(--text-base-shop);
+}

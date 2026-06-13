@@ -1,0 +1,81 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+/* ── Tailwind v4 @theme — Layer 1 as utility tokens (§20.4) ──────────────── */
+/* @theme variables become CSS custom properties in :root AND Tailwind utility */
+/* classes (bg-oak-500, text-gray-900, rounded-m, etc.). One source of truth.  */
+@theme {
+  /* Gray scale → bg-gray-*, text-gray-*, border-gray-* etc. */
+  --color-gray-0:   #ffffff;
+  --color-gray-50:  #f9f8f6;
+  --color-gray-100: #f0ede8;
+  --color-gray-200: #e0dbd3;
+  --color-gray-300: #c8c2b8;
+  --color-gray-400: #a09890;
+  --color-gray-500: #787068;
+  --color-gray-600: #5a5248;
+  --color-gray-700: #3d3830;
+  --color-gray-800: #28231e;
+  --color-gray-900: #1a1612;
+  --color-gray-950: #100e0b;
+
+  /* Brand oak → bg-oak-*, text-oak-* etc. */
+  --color-oak-100: #f5e6cc;
+  --color-oak-300: #c8914a;
+  --color-oak-500: #9a6420;
+  --color-oak-700: #5c3a0e;
+
+  /* Status colors */
+  --color-red-500:   #d63b2f;
+  --color-amber-500: #c27d18;
+  --color-green-500: #2e7d52;
+  --color-blue-500:  #2563a8;
+
+  /* Semantic Layer 2 aliases as Tailwind utilities */
+  /* These resolve at runtime via CSS vars so they follow the active theme. */
+  --color-surface:        var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-fg:             var(--text);
+  --color-fg-muted:       var(--text-muted);
+  --color-fg-faint:       var(--text-faint);
+  --color-border:         var(--border);
+  --color-border-strong:  var(--border-strong);
+  --color-accent:         var(--accent);
+  --color-accent-subtle:  var(--accent-subtle);
+  --color-danger:         var(--danger);
+  --color-warn:           var(--warn);
+  --color-ok:             var(--ok);
+  --color-info:           var(--info);
+
+  /* Border radii → rounded-s, rounded-m, rounded-l */
+  --radius-s: 4px;
+  --radius-m: 6px;
+  --radius-l: 10px;
+
+  /* Motion → duration-fast, duration-base, ease-out */
+  --duration-fast: 80ms;
+  --duration-base: 160ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────────── */
+html {
+  font-size: var(--text-base);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: var(--text);
+  background: var(--surface);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+}
+
+/* Radix focus-visible ring using the themed focus-ring token */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
