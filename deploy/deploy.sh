@@ -3,15 +3,21 @@
 # Usage: ./deploy/deploy.sh [mini-canterbury]
 set -euo pipefail
 
-HOST="${1:-mini-canterbury}"
+HOST="${1:-bhughes@mini-canterbury}"
 TS="$(date -u +%Y%m%dT%H%M%S)"
 
 echo "==> Gate: typecheck + test"
-pnpm typecheck
-pnpm test
+corepack pnpm --filter @tenon/core typecheck
+corepack pnpm --filter @tenon/server typecheck
+corepack pnpm --filter @tenon/web typecheck
+corepack pnpm --filter @tenon/core test
+corepack pnpm --filter @tenon/server test
+corepack pnpm --filter @tenon/web test
 
 echo "==> Build"
-pnpm build
+corepack pnpm --filter @tenon/core build
+corepack pnpm --filter @tenon/server build
+corepack pnpm --filter @tenon/web build
 
 echo "==> Stage"
 # Create a clean deploy layout that matches the systemd unit:
@@ -21,10 +27,11 @@ echo "==> Stage"
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 
-mkdir -p "$STAGE/server" "$STAGE/web"
+mkdir -p "$STAGE/server" "$STAGE/web" "$STAGE/systemd"
 
 cp packages/server/dist/index.js "$STAGE/server/"
 cp -r packages/web/dist/. "$STAGE/web/"
+cp deploy/tenon.service "$STAGE/systemd/"
 
 # Strip the workspace dep (@tenon/core is bundled into index.js by tsup) and devDeps
 # so `npm install --omit=dev` on the target only installs native runtime modules.
@@ -44,7 +51,7 @@ echo "==> Ship to $HOST ($TS)"
 ssh "$HOST" "mkdir -p ~/releases/$TS"
 scp tenon.tar.gz "$HOST:~/releases/$TS/"
 
-ssh "$HOST" bash <<REMOTE
+ssh -t "$HOST" bash <<REMOTE
 set -euo pipefail
 
 cd ~/releases/$TS
@@ -53,15 +60,20 @@ tar xzf tenon.tar.gz && rm tenon.tar.gz
 # Install prod native deps (express, better-sqlite3, sharp, etc.)
 # @tenon/core is already bundled into server/index.js — not needed here.
 cd server
-npm install --omit=dev
+/home/bhughes/.volta/bin/npm install --omit=dev
 cd ~
 
+# Install systemd service
+sudo cp ~/releases/$TS/systemd/tenon.service /etc/systemd/system/tenon.service
+sudo systemctl daemon-reload
+sudo systemctl enable tenon
+
 ln -sfn ~/releases/$TS ~/current
-systemctl restart tenon
+sudo systemctl restart tenon
 sleep 2
-systemctl is-active --quiet tenon \
+sudo systemctl is-active --quiet tenon \
   && echo "tenon running" \
-  || { echo "tenon failed to start:"; journalctl -u tenon -n 30; exit 1; }
+  || { echo "tenon failed to start:"; sudo journalctl -u tenon -n 30; exit 1; }
 
 # Prune old releases, keep last 5
 ls -dt ~/releases/*/ | tail -n +6 | xargs -r rm -rf
