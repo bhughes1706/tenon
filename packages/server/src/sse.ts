@@ -1,6 +1,6 @@
 import type { Response } from 'express'
 
-export type SseEventName = 'model_changed' | 'photo_added' | 'job_changed'
+export type SseEventName = 'model_changed' | 'photo_added' | 'photo_deleted' | 'job_changed'
 
 const clients = new Set<Response>()
 

@@ -84,20 +84,22 @@ function buildMcpServer(auditLog: pino.Logger, dataDir: string): McpServer {
     auditLog.info({ tool: 'create_job', title, client_name }, 'mcp mutating call')
     const db = getDb()
     let clientId: string | null = null
-    if (client_name) {
-      const existing = db.prepare('SELECT id FROM clients WHERE LOWER(name) = LOWER(?)').get(client_name) as { id: string } | undefined
-      if (existing) {
-        clientId = existing.id
-      } else {
-        clientId = makeClientId()
-        db.prepare('INSERT INTO clients (id, name, created_at) VALUES (?, ?, ?)').run(clientId, client_name, new Date().toISOString())
-      }
-    }
     const id = makeJobId()
     const now = new Date().toISOString()
-    db.prepare(
-      'INSERT INTO jobs (id, client_id, title, status, due_date, notes, payment_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(id, clientId, title, status, due_date ?? null, notes ?? null, 'unpaid', now, now)
+    db.transaction(() => {
+      if (client_name) {
+        const existing = db.prepare('SELECT id FROM clients WHERE LOWER(name) = LOWER(?)').get(client_name) as { id: string } | undefined
+        if (existing) {
+          clientId = existing.id
+        } else {
+          clientId = makeClientId()
+          db.prepare('INSERT INTO clients (id, name, created_at) VALUES (?, ?, ?)').run(clientId, client_name, now)
+        }
+      }
+      db.prepare(
+        'INSERT INTO jobs (id, client_id, title, status, due_date, notes, payment_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(id, clientId, title, status, due_date ?? null, notes ?? null, 'unpaid', now, now)
+    })()
     emitSse('job_changed', { id, event: 'created' })
     return { content: [text(db.prepare('SELECT * FROM jobs WHERE id = ?').get(id))] }
   })
@@ -119,6 +121,8 @@ function buildMcpServer(auditLog: pino.Logger, dataDir: string): McpServer {
     auditLog.info({ tool: 'update_job', job_id }, 'mcp mutating call')
     const db = getDb()
     if (!db.prepare('SELECT id FROM jobs WHERE id = ?').get(job_id)) return err('job not found')
+    // COALESCE patch: omitted/null fields keep their current value. There is no
+    // way to explicitly clear a nullable field (e.g. due_date) via this tool.
     const now = new Date().toISOString()
     db.prepare(`UPDATE jobs SET
       title          = COALESCE(?, title),
@@ -239,8 +243,15 @@ function buildMcpServer(auditLog: pino.Logger, dataDir: string): McpServer {
     }
 
     const now = new Date().toISOString()
-    db.prepare('INSERT INTO photos (id, job_id, path, thumb_path, caption, taken_at, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(photoId, job_id, result.photoPath, result.thumbPath, caption ?? null, result.takenAt, now)
+    try {
+      db.prepare('INSERT INTO photos (id, job_id, path, thumb_path, caption, taken_at, uploaded_at, exif) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(photoId, job_id, result.photoPath, result.thumbPath, caption ?? null, result.takenAt, now, result.exifJson)
+    } catch (e) {
+      for (const p of [result.photoPath, result.thumbPath]) {
+        try { fs.unlinkSync(path.join(dataDir, p)) } catch { /* already gone */ }
+      }
+      return err(`database insert failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
     emitSse('photo_added', { job_id, photo_id: photoId })
     return { content: [text(db.prepare('SELECT * FROM photos WHERE id = ?').get(photoId))] }
   })

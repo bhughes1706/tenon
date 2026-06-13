@@ -32,8 +32,15 @@ export function makePhotosRouter(dataDir: string): Router {
     const caption = typeof req.body.caption === 'string' ? req.body.caption : null
     const now = new Date().toISOString()
 
-    db.prepare('INSERT INTO photos (id, job_id, path, thumb_path, caption, taken_at, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(photoId, req.params.jobId, result.photoPath, result.thumbPath, caption, result.takenAt, now)
+    try {
+      db.prepare('INSERT INTO photos (id, job_id, path, thumb_path, caption, taken_at, uploaded_at, exif) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(photoId, req.params.jobId, result.photoPath, result.thumbPath, caption, result.takenAt, now, result.exifJson)
+    } catch (e) {
+      for (const p of [result.photoPath, result.thumbPath]) {
+        try { fs.unlinkSync(path.join(dataDir, p)) } catch { /* already gone */ }
+      }
+      throw e
+    }
 
     emitSse('photo_added', { job_id: req.params.jobId, photo_id: photoId })
     res.status(201).json(db.prepare('SELECT * FROM photos WHERE id = ?').get(photoId))
@@ -66,7 +73,7 @@ export function makePhotosRouter(dataDir: string): Router {
       try { fs.unlinkSync(abs) } catch { /* file already gone */ }
     }
 
-    emitSse('photo_added', { job_id: row.job_id, photo_id: row.id, event: 'deleted' })
+    emitSse('photo_deleted', { job_id: row.job_id, photo_id: row.id })
     res.status(204).send()
   })
 

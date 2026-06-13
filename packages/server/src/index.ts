@@ -60,6 +60,10 @@ app.use('/api', hardwareRouter)
 
 // ── MCP (/mcp) — Tailscale Funnel-exposed, bearer token required (§16.6) ─────
 // §16.6: 60 req/min per IP; render_view gets an additional 10/min cap (chunk 14)
+// NOTE: Tailscale Funnel proxies to localhost, so req.ip is always 127.0.0.1 —
+// this rate limit is effectively a single global cap, not per-client. The bearer
+// token is the primary gate; the rate limit is defense-in-depth against the auth
+// check itself being hammered before a 401 is returned.
 const mcpRateLimit = rateLimit({
   windowMs: 60 * 1000,
   max: 60,
