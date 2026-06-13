@@ -1,6 +1,7 @@
 import express from 'express'
 import path from 'path'
 import pino from 'pino'
+import rateLimit from 'express-rate-limit'
 import { openDb } from './db.js'
 import { makePhotosRouter } from './routes/photos.js'
 import clientsRouter from './routes/clients.js'
@@ -12,6 +13,8 @@ import speciesRouter from './routes/species.js'
 import timeLogsRouter from './routes/timeLogs.js'
 import notesRouter from './routes/notes.js'
 import eventsRouter from './routes/events.js'
+import { bearerAuth } from './middleware/bearerAuth.js'
+import { handleMcpRequest, makeAuditLog } from './mcp/server.js'
 
 const log = pino({
   level: process.env.LOG_LEVEL ?? 'info',
@@ -24,6 +27,8 @@ const dataDir = path.resolve(process.env.DATA_DIR ?? path.join(__dirname, '../..
 // Initialize DB and run pending migrations before accepting traffic
 openDb(dataDir)
 log.info({ dataDir }, 'database ready')
+
+const auditLog = makeAuditLog(dataDir)
 
 const app = express()
 app.use(express.json({ limit: '1mb' }))
@@ -53,8 +58,23 @@ app.use('/api', makePhotosRouter(dataDir))
 // Hardware similarly spans /api/jobs/:id/hardware and /api/hardware/:id
 app.use('/api', hardwareRouter)
 
-// Chunk 4: /mcp with bearer auth + rate limiting
-// Chunk 13: apply_model_ops, get_model, validate_model MCP tools
+// ── MCP (/mcp) — Tailscale Funnel-exposed, bearer token required (§16.6) ─────
+// §16.6: 60 req/min per IP; render_view gets an additional 10/min cap (chunk 14)
+const mcpRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' },
+})
+
+app.use('/mcp', mcpRateLimit, bearerAuth(), async (req, res, next) => {
+  try {
+    await handleMcpRequest(req, res, auditLog, dataDir)
+  } catch (err) {
+    next(err)
+  }
+})
 
 // Terminal error handler — Express 5 forwards sync throws from route handlers here.
 // Returns consistent { error } JSON instead of the default HTML 500, including FK
