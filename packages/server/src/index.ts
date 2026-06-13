@@ -1,4 +1,5 @@
 import express from 'express'
+import fs from 'fs'
 import path from 'path'
 import pino from 'pino'
 import rateLimit from 'express-rate-limit'
@@ -79,6 +80,15 @@ app.use('/mcp', mcpRateLimit, bearerAuth(), async (req, res, next) => {
     next(err)
   }
 })
+
+// ── Static PWA ───────────────────────────────────────────────────────────────
+// Serve built web assets from the sibling web/ dir in the deploy layout.
+// Must come after /api and /mcp so those routes aren't shadowed.
+const webDir = path.join(__dirname, '../web')
+if (fs.existsSync(webDir)) {
+  app.use(express.static(webDir))
+  app.get('/{*path}', (_req, res) => res.sendFile(path.join(webDir, 'index.html')))
+}
 
 // Terminal error handler — Express 5 forwards sync throws from route handlers here.
 // Returns consistent { error } JSON instead of the default HTML 500, including FK
