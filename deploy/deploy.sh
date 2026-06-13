@@ -30,6 +30,7 @@ trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/server" "$STAGE/web" "$STAGE/systemd"
 
 cp packages/server/dist/index.js "$STAGE/server/"
+cp -r packages/server/dist/migrations "$STAGE/server/"
 cp -r packages/web/dist/. "$STAGE/web/"
 cp deploy/tenon.service "$STAGE/systemd/"
 
