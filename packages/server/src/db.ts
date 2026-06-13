@@ -26,7 +26,13 @@ export function openDb(dataDir: string): Database.Database {
 // propagate — systemd will hold the previous release.
 function runMigrations(db: Database.Database, dataDir: string): void {
   const currentVersion = db.pragma('user_version', { simple: true }) as number
-  const migrationsDir = path.join(__dirname, '../migrations')
+  // In the production bundle (dist/), migrations are copied alongside index.js.
+  // In dev (tsx, __dirname = src/), they live one level up. Try both.
+  const candidates = [
+    path.join(__dirname, 'migrations'),
+    path.join(__dirname, '../migrations'),
+  ]
+  const migrationsDir = candidates.find(p => fs.existsSync(p)) ?? candidates[0]
 
   const files = fs.readdirSync(migrationsDir)
     .filter(f => /^\d{3}_.*\.sql$/.test(f))

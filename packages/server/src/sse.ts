@@ -20,6 +20,10 @@ export function registerSseClient(res: Response): void {
 export function emitSse(event: SseEventName, data: unknown): void {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
   for (const res of clients) {
-    res.write(payload)
+    try {
+      res.write(payload)
+    } catch {
+      clients.delete(res)
+    }
   }
 }

@@ -30,7 +30,10 @@ function loadModel(id: string): Model | null {
   const row = db.prepare('SELECT doc FROM models WHERE id = ?').get(id) as { doc: string } | undefined
   if (!row) return null
   const parsed = ModelSchema.safeParse(JSON.parse(row.doc))
-  return parsed.success ? parsed.data : null
+  // Throws rather than returning null so the caller can distinguish "not found"
+  // from "exists but corrupt/unmigrated" (§16.1 migrate-on-read lands in chunk 16).
+  if (!parsed.success) throw new Error(`model ${id} doc schema mismatch — needs doc migration`)
+  return parsed.data
 }
 
 router.get('/', (req, res) => {
@@ -97,7 +100,7 @@ router.post('/:id/ops', (req, res) => {
 
   const { expected_rev, ops } = bodyParse.data
 
-  // Optimistic concurrency: caller must know the current rev (§3.3)
+  // Fast pre-validation rejection — avoids paying validation cost on obvious stale reads (§3.3)
   if (expected_rev !== model.rev) {
     const result: OpResult = {
       ok: false,
@@ -120,20 +123,34 @@ router.post('/:id/ops', (req, res) => {
   const now = new Date().toISOString()
   const newRev = updated.rev
 
-  db.transaction(() => {
-    db.prepare('UPDATE models SET doc = ?, rev = ?, updated_at = ? WHERE id = ?')
-      .run(JSON.stringify(updated), newRev, now, req.params.id)
-
+  // CAS write — guards against a concurrent write landing between our load and this
+  // transaction (the fast check above is outside the transaction, so the window exists).
+  // `changes === 0` means another writer updated rev while we were validating (§3.3).
+  const committed = db.transaction((): boolean => {
+    const info = db.prepare('UPDATE models SET doc = ?, rev = ?, updated_at = ? WHERE id = ? AND rev = ?')
+      .run(JSON.stringify(updated), newRev, now, req.params.id, expected_rev)
+    if (info.changes === 0) return false
     if (newRev % SNAPSHOT_INTERVAL === 0) {
       db.prepare('INSERT OR REPLACE INTO model_snapshots (model_id, rev, doc, created_at) VALUES (?, ?, ?, ?)')
         .run(req.params.id, newRev, JSON.stringify(updated), now)
     }
+    return true
   })()
 
-  emitSse('model_changed', { id: req.params.id, rev: newRev })
+  if (!committed) {
+    const current = db.prepare('SELECT rev FROM models WHERE id = ?').get(req.params.id) as { rev: number } | undefined
+    const result: OpResult = {
+      ok: false,
+      rev: current?.rev ?? model.rev,
+      applied: [],
+      warnings: [],
+      errors: [`rev conflict: concurrent write detected`],
+    }
+    return res.status(409).json(result)
+  }
 
-  const result: OpResult = { ok: true, rev: newRev, applied, warnings: validation.warnings, errors: [] }
-  res.json(result)
+  emitSse('model_changed', { id: req.params.id, rev: newRev })
+  res.json({ ok: true, rev: newRev, applied, warnings: validation.warnings, errors: [] } satisfies OpResult)
 })
 
 // GET /api/models/:id/cutlist — stub until chunk 15

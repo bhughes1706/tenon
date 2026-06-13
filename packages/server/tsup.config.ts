@@ -10,4 +10,6 @@ export default defineConfig({
   // Bundle @tenon/core into the output so the target server is self-contained.
   // Native modules (better-sqlite3, sharp) stay external — they're installed on the target.
   noExternal: ['@tenon/core'],
+  // Copy SQL migration files into dist/ so the deployed tarball (dist/) is self-contained.
+  onSuccess: 'cp -r migrations dist/migrations',
 })

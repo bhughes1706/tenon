@@ -119,6 +119,15 @@ CREATE TABLE settings (
   value TEXT NOT NULL                          -- JSON scalar or object; parsed on read
 );
 
+-- Indexes for the common WHERE / JOIN patterns across list endpoints
+CREATE INDEX idx_models_job_id    ON models(job_id);
+CREATE INDEX idx_photos_job_id    ON photos(job_id);
+CREATE INDEX idx_time_logs_job_id ON time_logs(job_id);
+CREATE INDEX idx_notes_job_id     ON notes(job_id);
+CREATE INDEX idx_hardware_job_id  ON hardware(job_id);
+CREATE INDEX idx_jobs_status      ON jobs(status);
+CREATE INDEX idx_jobs_client_id   ON jobs(client_id);
+
 -- §9 settings seed rows
 INSERT INTO settings VALUES
   ('theme',               '"system"'),

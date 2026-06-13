@@ -56,6 +56,15 @@ app.use('/api', hardwareRouter)
 // Chunk 4: /mcp with bearer auth + rate limiting
 // Chunk 13: apply_model_ops, get_model, validate_model MCP tools
 
+// Terminal error handler — Express 5 forwards sync throws from route handlers here.
+// Returns consistent { error } JSON instead of the default HTML 500, including FK
+// violations from better-sqlite3 (foreign_keys=ON).
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const message = err instanceof Error ? err.message : 'internal server error'
+  log.error({ err }, 'unhandled error')
+  if (!res.headersSent) res.status(500).json({ error: message })
+})
+
 app.listen(port, () => {
   log.info({ port }, 'tenon server listening')
 })
