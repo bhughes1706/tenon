@@ -2,7 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles/index.css'
 import { initTheme } from './lib/theme.js'
-import { App } from './App.js'
+import { App } from './router.js'
 
 // Apply theme from localStorage before React renders to avoid FOUC.
 initTheme()
