@@ -92,7 +92,8 @@ function applyOne(m: Model, op: Op): void {
       break
     }
     case 'set_model_meta': {
-      m.meta = { ...m.meta, ...op.patch }
+      if (op.patch.name !== undefined) m.name = op.patch.name
+      if (op.patch.notes !== undefined) m.meta = { ...m.meta, notes: op.patch.notes }
       break
     }
   }
@@ -119,9 +120,12 @@ function invertOne(op: Op, before: Model): Op[] {
     case 'update_board': {
       const board = before.boards.find((b) => b.id === op.id)
       if (!board) return []
-      const patch: Record<string, unknown> = {}
-      for (const key of Object.keys(op.patch)) patch[key] = (board as Record<string, unknown>)[key]
-      return [{ op: 'update_board', id: op.id, patch } as unknown as Op]
+      type BoardPatch = Extract<Op, { op: 'update_board' }>['patch']
+      const patch = {} as BoardPatch
+      for (const key of Object.keys(op.patch)) {
+        ;(patch as Record<string, unknown>)[key] = (board as Record<string, unknown>)[key]
+      }
+      return [{ op: 'update_board', id: op.id, patch }]
     }
     case 'transform_board': {
       const board = before.boards.find((b) => b.id === op.id)
@@ -186,7 +190,7 @@ export function invertOps(ops: Op[], before: Model): Op[] {
   const chunks: Op[][] = []
   for (const op of ops) {
     const inv = invertOne(op, cur)
-    if (inv.length === 0 && op.op !== 'set_model_meta') return []
+    if (inv.length === 0) return []
     chunks.push(inv)
     applyOne(cur, op)
   }

@@ -117,6 +117,11 @@ export function DesignerShell() {
         void s.redo()
         return
       }
+      if (meta && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPaletteOpen((v) => !v)
+        return
+      }
       if (meta) return // leave other browser/system combos alone
       switch (e.key) {
         case 'v': case 'V': s.setMode('select'); break

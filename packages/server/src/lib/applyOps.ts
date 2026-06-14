@@ -123,7 +123,8 @@ export function applyOps(ops: Op[], model: Model): ApplyResult {
       }
 
       case 'set_model_meta': {
-        m.meta = { ...m.meta, ...op.patch }
+        if (op.patch.name !== undefined) m.name = op.patch.name
+        if (op.patch.notes !== undefined) m.meta = { ...m.meta, notes: op.patch.notes }
         break
       }
     }

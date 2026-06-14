@@ -62,8 +62,9 @@ function BoardInspector({ board, precision }: { board: Board; precision: number 
   const removeSelected = useModelStore((s) => s.removeSelected)
   const locked = board.locked
 
-  const patch = (p: Record<string, unknown>) =>
-    void dispatch([{ op: 'update_board', id: board.id, patch: p } as unknown as Op])
+  type BoardPatch = Extract<Op, { op: 'update_board' }>['patch']
+  const patch = (p: BoardPatch) =>
+    void dispatch([{ op: 'update_board', id: board.id, patch: p }])
   const setPos = (axis: 0 | 1 | 2, v: number) => {
     const pos = [...board.transform.pos] as [number, number, number]
     pos[axis] = v

@@ -79,6 +79,9 @@ export function createViewportResources(): ViewportResources {
     jointMat,
     ghostMat,
     scene,
+    // Not called in normal operation — GPU cleanup relies on WebGL context teardown
+    // when the Canvas unmounts (see Viewport.tsx effect comment). Kept for parity
+    // with the resource-ownership pattern so future callers have the option.
     dispose() {
       majorGeo.dispose()
       minorGeo.dispose()

@@ -97,14 +97,9 @@ function Root() {
     return () => window.removeEventListener('keydown', handleKey)
   }, [handleKey])
 
-  // Designer route manages its own chrome (topbar/rail/inspector/statusbar)
+  // Designer route manages its own chrome (topbar/rail/inspector/statusbar/palette).
   if (isDesigner) {
-    return (
-      <>
-        <Outlet />
-        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} ctx={ctx} />
-      </>
-    )
+    return <Outlet />
   }
 
   // Phone: bottom tab bar wraps all routes

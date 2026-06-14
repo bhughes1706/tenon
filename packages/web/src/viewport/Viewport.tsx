@@ -130,6 +130,20 @@ function SceneContents({
     if (obj) meshRefs.current.set(id, obj)
     else meshRefs.current.delete(id)
   }, [])
+  // Stable per-board ref setters: created once per id, cached in a ref-map, so
+  // BoardMesh never receives a new function prop just because the scene re-rendered.
+  const refSetters = useRef(new Map<string, (obj: THREE.Object3D | null) => void>())
+  const getRefSetter = useCallback(
+    (id: string) => {
+      let setter = refSetters.current.get(id)
+      if (!setter) {
+        setter = (obj: THREE.Object3D | null) => registerRef(id, obj)
+        refSetters.current.set(id, setter)
+      }
+      return setter
+    },
+    [registerRef],
+  )
 
   const selectedId = selection.length === 1 ? selection[0] : null
   const [gizmoTarget, setGizmoTarget] = useState<THREE.Object3D | null>(null)
@@ -221,7 +235,7 @@ function SceneContents({
           hovered={hovered === b.id}
           resources={resources}
           mode={mode}
-          setRef={(obj) => registerRef(b.id, obj)}
+          setRef={getRefSetter(b.id)}
           onPointerDown={onPointerDown}
         />
       ))}

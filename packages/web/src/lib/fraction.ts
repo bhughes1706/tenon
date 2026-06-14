@@ -21,7 +21,7 @@ export function formatInches(value: number, precision = 16): string {
     whole += 1
     num = 0
   }
-  if (num === 0) return `${sign}${whole}`
+  if (num === 0) return whole === 0 ? '0' : `${sign}${whole}`
 
   const g = gcd(num, den)
   num /= g
