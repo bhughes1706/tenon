@@ -64,7 +64,7 @@ corepack pnpm --filter @tenon/server typecheck
 corepack pnpm --filter @tenon/web typecheck
 corepack pnpm --filter @tenon/core test      # 46 tests
 corepack pnpm --filter @tenon/server test    # 16 tests
-corepack pnpm --filter @tenon/web test       # 27 tests (jsdom)
+corepack pnpm --filter @tenon/web test       # 50 tests (jsdom)
 ./deploy/deploy.sh                           # full build + deploy to mini-canterbury
 ```
 
@@ -178,6 +178,8 @@ Core has **no DOM, no Node-only APIs** — runs identically in browser worker an
 
 **Command registry:** `viewportCommands.ts` overwrites the registry stubs with real store-backed impls (select/add/measure/undo/redo/delete/joint/view presets/panel toggles), gated on `ctx.scene !== null` (non-null only while the viewport is mounted). Imported for its side effect in `main.tsx`. `AppCtx` now carries `selection`/`mode`/`scene`, populated by `AppContextProvider` from the store.
 
+**`DesignerShell` is the sole `CommandPalette` host** in the designer — it owns the palette state and handles ⌘K via its keydown handler. Do not add another palette instance in router or any designer child. The rail's search button and the ⌘K shortcut both open the same instance.
+
 **Code-split:** the designer route is `React.lazy`-loaded (`router.tsx`) so three.js/R3F (~934 KB) is a separate chunk — the jobs/photos PWA stays ~398 KB.
 
 ---
@@ -241,7 +243,9 @@ Chunk 8 = snapping (face/edge/end magnetism), collision broadphase, outliner pol
 
 12. **Do not `dispose()` `useMemo`-created THREE objects in effect cleanups** — under React StrictMode (dev) the cleanup runs while the memo is retained, leaving the remount with dead materials. The viewport relies on WebGL context teardown (Canvas unmount) to free GPU memory instead. See comments in `Viewport.tsx` / `viewportResources.ts`.
 
-13. **`syncViewportTheme` now has a module-level active scene** — `setViewportScene(scene)` registers it; `theme.ts applyTheme()` calls `syncViewportTheme()` (no arg) on every theme/density change and it recolors the registered scene. The Viewport registers on mount and clears on unmount. Wood/species colors are physical and never themed.
+13. **`set_model_meta` routes `name` to top-level, `notes` to `meta.notes`** — `m.name` is a top-level field; `m.meta` (`ModelMetaSchema` is `.strict()`) has no `name` key. Both `clientOps.applyOpsLocal` and `server/applyOps` are correct. The inverse in `invertOps` was already correct. No viewport UI emits this op yet; relevant when MCP model-rename lands.
+
+14. **`syncViewportTheme` now has a module-level active scene** — `setViewportScene(scene)` registers it; `theme.ts applyTheme()` calls `syncViewportTheme()` (no arg) on every theme/density change and it recolors the registered scene. The Viewport registers on mount and clears on unmount. Wood/species colors are physical and never themed.
 
 ---
 
@@ -273,30 +277,22 @@ sudo systemctl restart tenon
 
 ---
 
-## Local Verification (running Tenon on the dev Mac + headless render)
+## Local Verification
 
-Chunk 7 was verified by running the real stack locally and driving it through headless Chrome via `puppeteer-core`. Reference screenshots live in `docs/screenshots/chunk7/` (git-ignored — regenerate with the recipe below):
+**Running the stack locally:**
 
-- `01-viewport-dark.png` — designer loaded, board rendered on the grid (dark mode)
-- `02-selected-gizmo-inspector.png` — board selected: selection outline + transform gizmo + populated inspector (note `0.875` renders as `7/8`)
-- `03-light-mode-token-bridge.png` — light mode: canvas bg follows `--vp-bg` to `#f4f1ec`, grid flips dark-on-light, **wood color unchanged** (§20.3)
-
-### Run the stack locally
-
-**Gotcha:** the server `dev` script (`tsx`) **fails** — the server package is CJS and `@tenon/core` exports only an `import` condition, so CJS resolution hits `ERR_PACKAGE_PATH_NOT_EXPORTED`. Run the **built bundle** instead (tsup inlines core, exactly like prod):
+The server `dev` script (`tsx`) **fails** — CJS + `@tenon/core` ESM-only export hits `ERR_PACKAGE_PATH_NOT_EXPORTED`. Always run the built bundle:
 
 ```bash
-# Terminal 1 — API server (uses the existing local DB at repo-root data/)
+# Terminal 1 — API server
 corepack pnpm --filter @tenon/server build
-DATA_DIR="$PWD/data" PORT=3000 NODE_ENV=development \
-  node packages/server/dist/index.js
+DATA_DIR="$PWD/data" PORT=3000 NODE_ENV=development node packages/server/dist/index.js
 
-# Terminal 2 — web dev server (vite proxies /api → :3000; lands on 5173+ if taken)
+# Terminal 2 — Vite dev server (proxies /api → :3000)
 corepack pnpm --filter @tenon/web dev
 ```
 
-Create a model to open the designer (there is no model UI-create flow yet):
-
+Create a model (no UI create flow yet):
 ```bash
 MID=$(curl -s -X POST http://localhost:3000/api/models \
   -H 'Content-Type: application/json' -d '{"name":"Smoke Test"}' \
@@ -304,44 +300,6 @@ MID=$(curl -s -X POST http://localhost:3000/api/models \
 echo "open http://localhost:5173/designer/$MID"
 ```
 
-Exercise the op pipeline the viewport uses (add → transform → update → remove), and confirm `409` on stale `expected_rev` / `422` with a teaching message on a bad op field:
+**Headless R3F screenshots:** use `puppeteer-core` with `--use-angle=swiftshader` (software WebGL). Do **not** use `chrome --headless --screenshot --virtual-time-budget` — R3F's rAF loop never lets virtual time drain. Full recipe in chunk 7 commit / git log.
 
-```bash
-curl -s -X POST http://localhost:3000/api/models/$MID/ops \
-  -H 'Content-Type: application/json' \
-  -d '{"expected_rev":0,"ops":[{"op":"add_board","board":{"id":"brd_x1","name":"leg","kind":"board","dims":{"l":29.25,"w":1.75,"t":1.75},"species":"spc_red_oak","grain":"x","transform":{"pos":[0,0.875,0],"rot":[0,0,0]},"qty":1,"tags":[],"locked":false,"glue_up":null,"edge_grooves":[]}}]}'
-```
-
-### Headless render with puppeteer-core (no browser download)
-
-`puppeteer-core` drives the **already-installed** Chrome; `--use-angle=swiftshader` gives software WebGL so it renders headless. **Do not** use `chrome --headless --screenshot --virtual-time-budget`: R3F's continuous `requestAnimationFrame` loop never lets virtual time drain, so the screenshot is never taken.
-
-```bash
-mkdir -p /tmp/pp && cd /tmp/pp && npm init -y >/dev/null && npm i puppeteer-core@23
-```
-
-```js
-// /tmp/pp/shot.mjs  —  node shot.mjs "http://localhost:5173/designer/<MID>" out.png
-import puppeteer from 'puppeteer-core'
-const browser = await puppeteer.launch({
-  executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  headless: 'new',
-  args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--window-size=1400,900'],
-})
-const page = await browser.newPage()
-await page.setViewport({ width: 1400, height: 900 })
-page.on('pageerror', (e) => console.log('PAGEERROR', e.message))
-page.on('console', (m) => { if (m.type() === 'error') console.log('CONSOLE', m.text()) })
-await page.goto(process.argv[2], { waitUntil: 'networkidle2', timeout: 30000 })
-await new Promise((r) => setTimeout(r, 4000))      // let the lazy designer chunk + R3F paint
-console.log(await page.evaluate(() => ({
-  canvas: !!document.querySelector('canvas'),
-  vpBg: getComputedStyle(document.documentElement).getPropertyValue('--vp-bg').trim(),
-})))
-await page.screenshot({ path: process.argv[3] })
-await browser.close()
-```
-
-Notes:
-- Launch Chrome with a **throwaway `--user-data-dir`** or rely on puppeteer's default — using your real Chrome profile triggers GoogleUpdater/profile-lock noise and no screenshot.
-- To exercise theme switching, set it server-side (`PATCH /api/settings {"theme":"light"}`) and reload — the in-app toggle treats `system` as not-dark, so a single click from the `system` default goes `system→dark`, and two fast clicks hit the documented optimistic-settings race (see Known Issues). This is chunk 5/6 toggle logic, not the viewport.
+Chunk 7 was verified headless (0 JS errors, canvas + inspector + theme bridge correct). Screenshots in `docs/screenshots/chunk7/` (git-ignored).
