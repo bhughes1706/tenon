@@ -12,18 +12,30 @@ export interface ViewportScene {
   measureLine: { color: { set(color: string): void } }
 }
 
+// The live scene registered by the Viewport. applyTheme() (theme.ts) calls
+// syncViewportTheme() with no argument on every theme/density change; routing it
+// through this module-level handle lets the WebGL scene follow CSS in the same
+// frame without theme.ts knowing the viewport exists.
+let activeScene: ViewportScene | undefined
+
+export function setViewportScene(scene: ViewportScene | undefined): void {
+  activeScene = scene
+  if (scene) syncViewportTheme(scene)
+}
+
 export function syncViewportTheme(scene?: ViewportScene): void {
-  if (!scene) return
+  const target = scene ?? activeScene
+  if (!target) return
   const s = getComputedStyle(document.documentElement)
   const get = (v: string) => s.getPropertyValue(v).trim()
 
-  scene.background.set(get('--vp-bg'))
-  scene.gridMajor.material.color.set(get('--vp-grid-major'))
-  scene.gridMinor.material.color.set(get('--vp-grid-minor'))
-  scene.selectionOutline.color.set(get('--vp-selection'))
-  scene.hoverMaterial.color.set(get('--vp-hover'))
-  scene.collisionMaterial.color.set(get('--vp-collision'))
-  scene.jointHighlight.color.set(get('--vp-joint-hi'))
-  scene.ghostMaterial.color.set(get('--vp-ghost'))
-  scene.measureLine.color.set(get('--vp-measure'))
+  target.background.set(get('--vp-bg'))
+  target.gridMajor.material.color.set(get('--vp-grid-major'))
+  target.gridMinor.material.color.set(get('--vp-grid-minor'))
+  target.selectionOutline.color.set(get('--vp-selection'))
+  target.hoverMaterial.color.set(get('--vp-hover'))
+  target.collisionMaterial.color.set(get('--vp-collision'))
+  target.jointHighlight.color.set(get('--vp-joint-hi'))
+  target.ghostMaterial.color.set(get('--vp-ghost'))
+  target.measureLine.color.set(get('--vp-measure'))
 }

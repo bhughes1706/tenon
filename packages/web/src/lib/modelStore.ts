@@ -1,0 +1,261 @@
+import { create } from 'zustand'
+import type { Model, Op, OpResult, Warning, Board } from '@tenon/core'
+import { fetchModel, applyModelOps } from './modelApi.js'
+import { applyOpsLocal, invertOps } from './clientOps.js'
+import type { ViewportScene } from './syncViewportTheme.js'
+
+export type ViewportMode = 'select' | 'add' | 'measure'
+export type GizmoMode = 'translate' | 'rotate'
+export type DesignerPanel = 'outliner' | 'lint' | 'cutlist' | null
+export type ViewPreset = 'iso' | 'front' | 'top'
+
+interface UndoEntry {
+  forward: Op[]
+  inverse: Op[]
+}
+
+interface ModelState {
+  modelId: string | null
+  model: Model | null
+  loading: boolean
+  saving: boolean
+  error: string | null
+  toast: string | null
+
+  selection: string[]
+  hovered: string | null
+  mode: ViewportMode
+  gizmoMode: GizmoMode
+  panel: DesignerPanel
+  warnings: Warning[]
+  snapGrid: number // inches; 0 = off (§20.5)
+  scene: ViewportScene | null
+  addDialogOpen: boolean
+
+  // A view-preset request the Viewport consumes to move the camera. The counter
+  // lets the same preset re-fire (e.g. clicking "iso" twice to re-frame).
+  viewRequest: { view: ViewPreset; n: number }
+
+  undoStack: UndoEntry[]
+  redoStack: UndoEntry[]
+
+  // Actions
+  load: (id: string) => Promise<void>
+  dispatch: (ops: Op[]) => Promise<boolean>
+  undo: () => Promise<void>
+  redo: () => Promise<void>
+
+  addBoard: (board: Board) => Promise<void>
+  removeSelected: () => Promise<void>
+
+  setSelection: (ids: string[]) => void
+  toggleSelection: (id: string, additive: boolean) => void
+  clearSelection: () => void
+  setHovered: (id: string | null) => void
+  setMode: (mode: ViewportMode) => void
+  setGizmoMode: (mode: GizmoMode) => void
+  setPanel: (panel: DesignerPanel) => void
+  togglePanel: (panel: Exclude<DesignerPanel, null>) => void
+  requestView: (view: ViewPreset) => void
+  setSnapGrid: (grid: number) => void
+  setScene: (scene: ViewportScene | null) => void
+  openAddDialog: () => void
+  closeAddDialog: () => void
+  dismissToast: () => void
+  connectEvents: () => () => void
+}
+
+export const useModelStore = create<ModelState>((set, get) => {
+  // Shared optimistic-apply + post + reconcile. Does not touch undo/redo stacks.
+  async function applyAndPost(ops: Op[]): Promise<boolean> {
+    const { modelId, model } = get()
+    if (!modelId || !model) return false
+    const before = model
+    const optimistic = applyOpsLocal(before, ops)
+    set({ model: optimistic, saving: true, error: null })
+
+    let result: OpResult
+    try {
+      result = await applyModelOps(modelId, before.rev, ops)
+    } catch (e) {
+      // Network failure — roll back to server truth, drop history (it may be stale).
+      const fresh = await fetchModel(modelId).catch(() => before)
+      set({
+        model: fresh,
+        saving: false,
+        error: e instanceof Error ? e.message : 'request failed',
+        undoStack: [],
+        redoStack: [],
+      })
+      return false
+    }
+
+    if (result.ok) {
+      // ok implies the server applied against our rev, so rev === optimistic.rev.
+      // The mismatch branch is a safety net for an unexpected server contract change.
+      if (result.rev !== optimistic.rev) {
+        const fresh = await fetchModel(modelId).catch(() => optimistic)
+        set({ model: fresh, warnings: result.warnings, saving: false })
+      } else {
+        set({ model: { ...optimistic, rev: result.rev }, warnings: result.warnings, saving: false })
+      }
+      return true
+    }
+
+    // Rejected (rev conflict or validation) — resync to server, clear history.
+    const fresh = await fetchModel(modelId).catch(() => before)
+    set({
+      model: fresh,
+      saving: false,
+      error: result.errors.join('; ') || 'edit rejected',
+      undoStack: [],
+      redoStack: [],
+    })
+    return false
+  }
+
+  return {
+    modelId: null,
+    model: null,
+    loading: false,
+    saving: false,
+    error: null,
+    toast: null,
+    selection: [],
+    hovered: null,
+    mode: 'select',
+    gizmoMode: 'translate',
+    panel: null,
+    warnings: [],
+    snapGrid: 0.0625,
+    scene: null,
+    addDialogOpen: false,
+    viewRequest: { view: 'iso', n: 0 },
+    undoStack: [],
+    redoStack: [],
+
+    async load(id) {
+      set({
+        modelId: id,
+        loading: true,
+        error: null,
+        selection: [],
+        hovered: null,
+        undoStack: [],
+        redoStack: [],
+        warnings: [],
+      })
+      try {
+        const model = await fetchModel(id)
+        set({ model, loading: false })
+      } catch (e) {
+        set({ loading: false, error: e instanceof Error ? e.message : 'failed to load model' })
+      }
+    },
+
+    async dispatch(ops) {
+      const before = get().model
+      if (!before) return false
+      const inverse = invertOps(ops, before)
+      const ok = await applyAndPost(ops)
+      if (ok && inverse.length > 0) {
+        set((s) => ({ undoStack: [...s.undoStack, { forward: ops, inverse }], redoStack: [] }))
+      }
+      return ok
+    },
+
+    async undo() {
+      const { undoStack } = get()
+      const entry = undoStack[undoStack.length - 1]
+      if (!entry) return
+      const ok = await applyAndPost(entry.inverse)
+      if (ok) {
+        set((s) => ({
+          undoStack: s.undoStack.slice(0, -1),
+          redoStack: [...s.redoStack, entry],
+        }))
+      }
+    },
+
+    async redo() {
+      const { redoStack } = get()
+      const entry = redoStack[redoStack.length - 1]
+      if (!entry) return
+      const ok = await applyAndPost(entry.forward)
+      if (ok) {
+        set((s) => ({
+          redoStack: s.redoStack.slice(0, -1),
+          undoStack: [...s.undoStack, entry],
+        }))
+      }
+    },
+
+    async addBoard(board) {
+      const ok = await get().dispatch([{ op: 'add_board', board }])
+      if (ok && board.id) set({ selection: [board.id], mode: 'select' })
+    },
+
+    async removeSelected() {
+      const { selection } = get()
+      if (selection.length === 0) return
+      const ops: Op[] = selection.map((id) => ({ op: 'remove_board', id }))
+      const ok = await get().dispatch(ops)
+      if (ok) set({ selection: [] })
+    },
+
+    setSelection: (ids) => set({ selection: ids }),
+    toggleSelection: (id, additive) =>
+      set((s) => {
+        if (!additive) return { selection: [id] }
+        return s.selection.includes(id)
+          ? { selection: s.selection.filter((x) => x !== id) }
+          : { selection: [...s.selection, id] }
+      }),
+    clearSelection: () => set({ selection: [] }),
+    setHovered: (id) => set({ hovered: id }),
+    setMode: (mode) => set({ mode }),
+    setGizmoMode: (gizmoMode) => set({ gizmoMode }),
+    setPanel: (panel) => set({ panel }),
+    togglePanel: (panel) => set((s) => ({ panel: s.panel === panel ? null : panel })),
+    requestView: (view) => set((s) => ({ viewRequest: { view, n: s.viewRequest.n + 1 } })),
+    setSnapGrid: (snapGrid) => set({ snapGrid }),
+    setScene: (scene) => set({ scene }),
+    openAddDialog: () => set({ addDialogOpen: true, mode: 'add' }),
+    closeAddDialog: () => set((s) => ({ addDialogOpen: false, mode: s.mode === 'add' ? 'select' : s.mode })),
+    dismissToast: () => set({ toast: null }),
+
+    // Subscribe to server model_changed events. A change we did not originate
+    // (rev ahead of ours) refetches and clears local undo history (§3.3).
+    connectEvents() {
+      const es = new EventSource('/api/events')
+      const onModelChanged = (ev: MessageEvent) => {
+        const { modelId, model } = get()
+        if (!modelId || !model) return
+        let data: { id?: string; rev?: number }
+        try {
+          data = JSON.parse(ev.data)
+        } catch {
+          return
+        }
+        if (data.id !== modelId) return
+        if (typeof data.rev === 'number' && data.rev === model.rev) return // our own write
+        if (get().saving) return // our write is mid-flight; its echo will match
+        fetchModel(modelId)
+          .then((fresh) =>
+            set({
+              model: fresh,
+              undoStack: [],
+              redoStack: [],
+              toast: 'Model updated externally — undo history cleared',
+            }),
+          )
+          .catch(() => {})
+      }
+      es.addEventListener('model_changed', onModelChanged as EventListener)
+      return () => {
+        es.removeEventListener('model_changed', onModelChanged as EventListener)
+        es.close()
+      }
+    },
+  }
+})

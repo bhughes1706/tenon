@@ -1,16 +1,21 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react'
 import {
   createBrowserRouter, RouterProvider, Navigate, Outlet,
   useLocation, useNavigate,
 } from 'react-router-dom'
 import { AppContextProvider, useAppCtx } from './lib/AppContext.js'
 import { CommandPalette } from './ui/CommandPalette.js'
-import { DesignerPage } from './pages/DesignerPage.js'
 import { JobsBoard } from './pages/JobsBoard.js'
 import { JobDetail } from './pages/JobDetail.js'
 import { ModelsPage } from './pages/ModelsPage.js'
 import { SettingsPage } from './pages/SettingsPage.js'
 import { PhoneTabBar } from './ui/PhoneTabBar.js'
+
+// The designer pulls in three.js / R3F (~1 MB). Lazy-load it so the jobs/photos
+// PWA — the phase-1 survival product — stays lean on phone and shop PC.
+const DesignerPage = lazy(() =>
+  import('./pages/DesignerPage.js').then((m) => ({ default: m.DesignerPage })),
+)
 
 function useIsMobile() {
   const [mobile, setMobile] = useState(() => window.innerWidth < 768)
@@ -139,7 +144,18 @@ const router = createBrowserRouter([
           { path: '/jobs/:id',          element: <JobDetail /> },
           { path: '/models',            element: <ModelsPage /> },
           { path: '/settings',          element: <SettingsPage /> },
-          { path: '/designer/:modelId', element: <DesignerPage /> },
+          {
+            path: '/designer/:modelId',
+            element: (
+              <Suspense fallback={
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100dvh', color: 'var(--text-faint)', fontSize: 'var(--text-sm)', background: 'var(--vp-bg)' }}>
+                  Loading designer…
+                </div>
+              }>
+                <DesignerPage />
+              </Suspense>
+            ),
+          },
           // Phone-only capture tab stub
           { path: '/capture',           element: (
             <div style={{ padding: 'var(--sp-8)', textAlign: 'center', color: 'var(--text-faint)', fontSize: 'var(--text-sm)' }}>

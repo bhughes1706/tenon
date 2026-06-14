@@ -1,11 +1,18 @@
 import type { Settings } from './api.js'
+import type { ViewportScene } from './syncViewportTheme.js'
 
 // §19.1 — Every user action is a registered command. UI surfaces are renderers
-// over registry.filtered(ctx). Chunk 7 extends AppCtx with selection/mode state.
+// over registry.filtered(ctx). Designer-only fields (selection/mode/scene) are
+// populated while the viewport is mounted and inert elsewhere; command run()
+// implementations read live state from the model store, so these exist mainly
+// for `when` predicates (e.g. "join requires two boards selected").
 export interface AppCtx {
   navigate: (to: string) => void
   settings: Settings | null
   updateSettings: (patch: Partial<Settings>) => void
+  selection: string[]
+  mode: 'select' | 'add' | 'measure'
+  scene: ViewportScene | null
 }
 
 export interface Command {

@@ -10,6 +10,9 @@ data/
 .DS_Store
 Thumbs.db
 
+# Local verification screenshots (regenerate via the puppeteer recipe in AGENT_HANDOFF.md)
+docs/screenshots/
+
 # Vite
 packages/web/dist/
 packages/web/.vite/

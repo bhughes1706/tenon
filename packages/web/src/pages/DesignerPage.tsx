@@ -1,7 +1,7 @@
-import { useParams } from 'react-router-dom'
 import { DesignerShell } from '../ui/DesignerShell.js'
 
-// Chunk 7 replaces the placeholder viewport with a real R3F scene.
+// Thin route wrapper — DesignerShell reads :modelId from the router and owns the
+// viewport, chrome, and command wiring (chunk 7).
 export function DesignerPage() {
   return <DesignerShell />
 }
