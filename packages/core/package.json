@@ -9,6 +9,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./eval": {
+      "import": "./dist/eval/index.js",
+      "types": "./dist/eval/index.d.ts"
     }
   },
   "scripts": {
@@ -17,6 +21,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "manifold-3d": "3.5.1",
     "nanoid": "^5.0.9",
     "zod": "^3.24.1"
   },

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -44,5 +45,25 @@ export default defineConfig({
   // Shared worker for geometry evaluator (Manifold WASM) — chunk 9
   worker: {
     format: 'es'
+  },
+  optimizeDeps: {
+    // Don't let esbuild pre-bundle manifold-3d: its glue locates the kernel via
+    // `new URL("manifold.wasm", import.meta.url)`, and pre-bundling into
+    // .vite/deps/ doesn't copy the .wasm next to it, breaking resolution (and
+    // forcing a mid-load re-optimize + page reload). Served as a real ESM module
+    // the URL resolves against node_modules, which Vite serves. Rollup handles
+    // the same pattern at build time (emits the .wasm as a hashed asset).
+    exclude: ['manifold-3d']
+  },
+  build: {
+    rollupOptions: {
+      // CHUNK 9 SPIKE: extra `spike` entry exercises the geometry worker + WASM
+      // through the production (rollup) bundler. Remove with the spike harness
+      // (spike.html / src/spike-main.ts) once §11 step 3 lands.
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        spike: fileURLToPath(new URL('./spike.html', import.meta.url))
+      }
+    }
   }
 })
