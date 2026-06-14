@@ -1,8 +1,11 @@
 import { create } from 'zustand'
 import type { Model, Op, OpResult, Warning, Board } from '@tenon/core'
+import { makeBoardId, makeGroupId } from '@tenon/core'
 import { fetchModel, applyModelOps } from './modelApi.js'
 import { applyOpsLocal, invertOps } from './clientOps.js'
+import { recomputeWarnings } from './collision.js'
 import type { ViewportScene } from './syncViewportTheme.js'
+import type { CommandContext } from './registry.js'
 
 export type ViewportMode = 'select' | 'add' | 'measure'
 export type GizmoMode = 'translate' | 'rotate'
@@ -31,6 +34,9 @@ interface ModelState {
   snapGrid: number // inches; 0 = off (§20.5)
   scene: ViewportScene | null
   addDialogOpen: boolean
+  // Which hit target the right-click context menu is filtered for (§19.3). Set on
+  // right-button pointerdown just before the native contextmenu opens the menu.
+  menuTarget: CommandContext | null
 
   // A view-preset request the Viewport consumes to move the camera. The counter
   // lets the same preset re-fire (e.g. clicking "iso" twice to re-frame).
@@ -47,6 +53,9 @@ interface ModelState {
 
   addBoard: (board: Board) => Promise<void>
   removeSelected: () => Promise<void>
+  duplicateSelected: () => Promise<void>
+  groupSelected: () => Promise<void>
+  ungroup: (groupId: string) => Promise<void>
 
   setSelection: (ids: string[]) => void
   toggleSelection: (id: string, additive: boolean) => void
@@ -61,6 +70,7 @@ interface ModelState {
   setScene: (scene: ViewportScene | null) => void
   openAddDialog: () => void
   closeAddDialog: () => void
+  setMenuTarget: (target: CommandContext | null) => void
   dismissToast: () => void
   connectEvents: () => () => void
 }
@@ -72,7 +82,10 @@ export const useModelStore = create<ModelState>((set, get) => {
     if (!modelId || !model) return false
     const before = model
     const optimistic = applyOpsLocal(before, ops)
-    set({ model: optimistic, saving: true, error: null })
+    // Lint is recomputed client-side on every model mutation so collisions show
+    // instantly, no server round-trip (§6 step 4). Chunk 9 moves authority to the
+    // server's Manifold narrowphase via OpResult.warnings; until then we ignore it.
+    set({ model: optimistic, warnings: recomputeWarnings(optimistic), saving: true, error: null })
 
     let result: OpResult
     try {
@@ -82,6 +95,7 @@ export const useModelStore = create<ModelState>((set, get) => {
       const fresh = await fetchModel(modelId).catch(() => before)
       set({
         model: fresh,
+        warnings: recomputeWarnings(fresh),
         saving: false,
         error: e instanceof Error ? e.message : 'request failed',
         undoStack: [],
@@ -95,9 +109,10 @@ export const useModelStore = create<ModelState>((set, get) => {
       // The mismatch branch is a safety net for an unexpected server contract change.
       if (result.rev !== optimistic.rev) {
         const fresh = await fetchModel(modelId).catch(() => optimistic)
-        set({ model: fresh, warnings: result.warnings, saving: false })
+        set({ model: fresh, warnings: recomputeWarnings(fresh), saving: false })
       } else {
-        set({ model: { ...optimistic, rev: result.rev }, warnings: result.warnings, saving: false })
+        const synced = { ...optimistic, rev: result.rev }
+        set({ model: synced, warnings: recomputeWarnings(synced), saving: false })
       }
       return true
     }
@@ -106,6 +121,7 @@ export const useModelStore = create<ModelState>((set, get) => {
     const fresh = await fetchModel(modelId).catch(() => before)
     set({
       model: fresh,
+      warnings: recomputeWarnings(fresh),
       saving: false,
       error: result.errors.join('; ') || 'edit rejected',
       undoStack: [],
@@ -130,6 +146,7 @@ export const useModelStore = create<ModelState>((set, get) => {
     snapGrid: 0.0625,
     scene: null,
     addDialogOpen: false,
+    menuTarget: null,
     viewRequest: { view: 'iso', n: 0 },
     undoStack: [],
     redoStack: [],
@@ -147,7 +164,7 @@ export const useModelStore = create<ModelState>((set, get) => {
       })
       try {
         const model = await fetchModel(id)
-        set({ model, loading: false })
+        set({ model, warnings: recomputeWarnings(model), loading: false })
       } catch (e) {
         set({ loading: false, error: e instanceof Error ? e.message : 'failed to load model' })
       }
@@ -203,6 +220,51 @@ export const useModelStore = create<ModelState>((set, get) => {
       if (ok) set({ selection: [] })
     },
 
+    // Duplicate via add_board (not the non-invertible duplicate_board op) with
+    // explicit ids so undo/redo stay deterministic. Copies land offset so they
+    // don't sit perfectly inside the originals.
+    async duplicateSelected() {
+      const { selection, model } = get()
+      if (!model || selection.length === 0) return
+      const OFFSET: [number, number, number] = [2, 0, 2]
+      const ops: Op[] = []
+      const newIds: string[] = []
+      for (const id of selection) {
+        const src = model.boards.find((b) => b.id === id)
+        if (!src) continue
+        const newId = makeBoardId()
+        newIds.push(newId)
+        const board: Board = {
+          ...JSON.parse(JSON.stringify(src)),
+          id: newId,
+          name: `${src.name} copy`,
+          transform: {
+            pos: [
+              src.transform.pos[0] + OFFSET[0],
+              src.transform.pos[1] + OFFSET[1],
+              src.transform.pos[2] + OFFSET[2],
+            ],
+            rot: src.transform.rot,
+          },
+        }
+        ops.push({ op: 'add_board', board })
+      }
+      if (ops.length === 0) return
+      const ok = await get().dispatch(ops)
+      if (ok) set({ selection: newIds })
+    },
+
+    // Group the current selection. Explicit id keeps the group invertible (§4.1).
+    async groupSelected() {
+      const { selection } = get()
+      if (selection.length < 2) return
+      await get().dispatch([{ op: 'group', member_ids: selection, id: makeGroupId() }])
+    },
+
+    async ungroup(groupId) {
+      await get().dispatch([{ op: 'ungroup', group_id: groupId }])
+    },
+
     setSelection: (ids) => set({ selection: ids }),
     toggleSelection: (id, additive) =>
       set((s) => {
@@ -222,6 +284,7 @@ export const useModelStore = create<ModelState>((set, get) => {
     setScene: (scene) => set({ scene }),
     openAddDialog: () => set({ addDialogOpen: true, mode: 'add' }),
     closeAddDialog: () => set((s) => ({ addDialogOpen: false, mode: s.mode === 'add' ? 'select' : s.mode })),
+    setMenuTarget: (menuTarget) => set({ menuTarget }),
     dismissToast: () => set({ toast: null }),
 
     // Subscribe to server model_changed events. A change we did not originate
@@ -244,6 +307,7 @@ export const useModelStore = create<ModelState>((set, get) => {
           .then((fresh) =>
             set({
               model: fresh,
+              warnings: recomputeWarnings(fresh),
               undoStack: [],
               redoStack: [],
               toast: 'Model updated externally — undo history cleared',

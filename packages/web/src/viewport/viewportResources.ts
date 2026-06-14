@@ -28,6 +28,7 @@ export interface ViewportResources {
   selectionMat: THREE.LineBasicMaterial
   hoverMat: THREE.LineBasicMaterial
   measureMat: THREE.LineBasicMaterial
+  snapMat: THREE.LineBasicMaterial
   collisionMat: THREE.MeshStandardMaterial
   jointMat: THREE.MeshStandardMaterial
   ghostMat: THREE.MeshStandardMaterial
@@ -49,6 +50,7 @@ export function createViewportResources(): ViewportResources {
   const selectionMat = new THREE.LineBasicMaterial()
   const hoverMat = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.8 })
   const measureMat = new THREE.LineBasicMaterial()
+  const snapMat = new THREE.LineBasicMaterial()
   const collisionMat = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.5 })
   const jointMat = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.6 })
   const ghostMat = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.4 })
@@ -66,6 +68,7 @@ export function createViewportResources(): ViewportResources {
     jointHighlight: { color: jointMat.color },
     ghostMaterial: { color: ghostMat.color },
     measureLine: { color: measureMat.color },
+    snapLine: { color: snapMat.color },
   }
 
   return {
@@ -75,6 +78,7 @@ export function createViewportResources(): ViewportResources {
     selectionMat,
     hoverMat,
     measureMat,
+    snapMat,
     collisionMat,
     jointMat,
     ghostMat,
@@ -85,7 +89,7 @@ export function createViewportResources(): ViewportResources {
     dispose() {
       majorGeo.dispose()
       minorGeo.dispose()
-      for (const m of [majorMat, minorMat, selectionMat, hoverMat, measureMat, collisionMat, jointMat, ghostMat]) {
+      for (const m of [majorMat, minorMat, selectionMat, hoverMat, measureMat, snapMat, collisionMat, jointMat, ghostMat]) {
         m.dispose()
       }
     },

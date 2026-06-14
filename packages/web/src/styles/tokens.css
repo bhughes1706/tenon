@@ -98,6 +98,7 @@
   --vp-joint-hi:   #c27d18;
   --vp-ghost:      rgba(37, 99, 168, 0.18);
   --vp-measure:    #2e7d52;
+  --vp-snap:       #7c5cff;
 }
 
 [data-theme="dark"] {
@@ -128,6 +129,7 @@
   --vp-joint-hi:   #d4943a;
   --vp-ghost:      rgba(77, 143, 212, 0.15);
   --vp-measure:    #4caf7d;
+  --vp-snap:       #9d86ff;
 }
 
 /* ── Layer 3 — Component tokens (§20.1) ───────────────────────────────────── */

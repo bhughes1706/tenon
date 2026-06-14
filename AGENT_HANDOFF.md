@@ -1,6 +1,6 @@
 # Tenon — Agent Handoff Document
 
-**Date:** 2026-06-13  
+**Date:** 2026-06-13 (chunk 8 complete)  
 **Repo:** https://github.com/bhughes1706/tenon  
 **Spec:** `/Users/Brian/Downloads/tenon-spec-v0.4.md` (always load this — it is the ground truth)
 
@@ -64,13 +64,13 @@ corepack pnpm --filter @tenon/server typecheck
 corepack pnpm --filter @tenon/web typecheck
 corepack pnpm --filter @tenon/core test      # 46 tests
 corepack pnpm --filter @tenon/server test    # 16 tests
-corepack pnpm --filter @tenon/web test       # 50 tests (jsdom)
+corepack pnpm --filter @tenon/web test       # 69 tests (jsdom)
 ./deploy/deploy.sh                           # full build + deploy to mini-canterbury
 ```
 
 ---
 
-## What Is Built (Chunks 1–7 complete)
+## What Is Built (Chunks 1–8 complete)
 
 ### `@tenon/core`
 
@@ -182,6 +182,20 @@ Core has **no DOM, no Node-only APIs** — runs identically in browser worker an
 
 **Code-split:** the designer route is `React.lazy`-loaded (`router.tsx`) so three.js/R3F (~934 KB) is a separate chunk — the jobs/photos PWA stays ~398 KB.
 
+### `@tenon/web` — Chunk 8 (snapping · collision · outliner tree · context menu)
+
+Design mini-spec: `docs/chunk8-design.md` (decisions + tunables; read it before extending chunk 8).
+
+**Snapping** (`src/viewport/snapping.ts` — pure, 9 tests): `solveSnap()` does **per-axis** face/edge/end magnetism against nearby boards' world AABBs. Because v1 rotations are 90° multiples, AABBs are *exact*, so faces/edges/ends all fall out of one plane-snap solver. Wired into the gizmo's `onObjectChange` in `Viewport.tsx`: drag-start caches all AABBs, each frame pulls the dragged board toward the nearest face/edge/end within an ~8px (screen-space → world) threshold, else grid. **Alt suspends** magnetism. Magnetic guides render as dashed `--vp-snap` lines. `TransformControls translationSnap` is now **null** — the handler owns both grid and magnetic snap so they don't fight; `commitTransform` no longer re-grid-snaps (it would undo magnetic snaps).
+
+**Collision broadphase** (`src/lib/collision.ts` — pure, 8 tests): `recomputeWarnings(model)` does pairwise AABB penetration → `UNRESOLVED_COLLISION` per pair not governed by an enabled joint. Uses a **positive-overlap epsilon (0.005")** so flush contact (butt joints, a shelf on a side) does NOT flag — only real penetration does (the §2.4 joint-completeness signal). The store recomputes warnings on **every** model mutation (load/op/undo/redo/SSE) so lint is live during optimistic edits. **Authority note:** chunk 9 moves collision to the server Manifold narrowphase via `OpResult.warnings`; the store currently ignores `result.warnings` and uses the client broadphase — switch that in ch.9.
+
+**Outliner tree** (`DesignerShell.tsx` `Outliner`/`BoardRow`): collapsible group nodes + ungrouped boards; group row click selects members; per-group ungroup button; a "Group N boards" button appears when ≥2 selected. **No drag-and-drop** (deferred). Groups are **selection/organization only** — the gizmo stays single-board.
+
+**Context menu** (`src/ui/ViewportContextMenu.tsx`, Radix): registry-driven via a new `Command.contexts?: CommandContext[]` (`'board'|'multi'|'empty'`) tag + `registry.forContext(target, ctx)`. Tag is **additive** — the ⌘K palette ignores it. Right-button pointerdown sets `store.menuTarget` (board/multi via `Viewport` mesh handler, empty via `onPointerMissed`) before the native contextmenu opens the menu. Entries: board/multi → Duplicate (⌘D) · Group (⌘G) · Delete; empty → Add Board + a View submenu. Highlight styling is `.ctx-item[data-highlighted]` in `index.css` (inline styles can't target Radix's data attr).
+
+**New store actions** (`modelStore.ts`): `duplicateSelected` (emits `add_board` with explicit ids + `[2,0,2]` offset — **not** the non-invertible `duplicate_board`), `groupSelected` (emits `group` with an explicit `grp_` id so it's undoable), `ungroup`, `setMenuTarget`. ⌘D/⌘G handled in `DesignerShell` keydown.
+
 ---
 
 ## What Is NOT Built Yet (Remaining Chunks)
@@ -189,8 +203,8 @@ Core has **no DOM, no Node-only APIs** — runs identically in browser worker an
 | Chunk | What | Depends on |
 |---|---|---|
 | ~~7~~ | ~~Viewport: R3F scene, orbit, board render, transform gizmo, Select/Add/Measure modes~~ | **DONE** |
-| **8** | **Snapping (face/edge magnetism), collision broadphase, outliner panel (basic version shipped in 7), context menu** | 7 — **NEXT CHUNK** |
-| 9 | Manifold WASM geometry evaluator in web worker; joint evaluation pipeline; housing/rabbet/half-lap/M&T/box/dovetail | 7 |
+| ~~8~~ | ~~Snapping (face/edge/end magnetism), collision broadphase, outliner tree, context menu~~ | **DONE** |
+| **9** | **Manifold WASM geometry evaluator in web worker; joint evaluation pipeline; housing/rabbet/half-lap/M&T/box/dovetail** | 7 — **NEXT CHUNK** |
 | 10 | Cut list (board → rough stock → waste factors), species cost, materials summary | 9 |
 | 11 | Joint dialog + lint resolve flow; `render_view` MCP tool | 9 |
 | 12 | Photo capture tab (camera API, phone-first) | 6 |
@@ -201,19 +215,19 @@ Core has **no DOM, no Node-only APIs** — runs identically in browser worker an
 
 ---
 
-## Chunk 8 Entry Conditions (What the Next Agent Needs to Know)
+## Chunk 9 Entry Conditions (What the Next Agent Needs to Know)
 
-Chunk 8 = snapping (face/edge/end magnetism), collision broadphase, outliner polish, right-click context menu. Assigned to **Opus 4.8** (judgment-heavy UX).
+Chunk 9 = Manifold WASM geometry evaluator in a web worker; joint evaluation pipeline (housing/rabbet/half-lap/M&T/box/dovetail). The long pole — see spec §6 (evaluator), §6.1 (joint test invariants), §5 (joint types).
 
-**Where the hooks already are:**
-- **Snapping** plugs into the gizmo drag in `src/viewport/Viewport.tsx`. The gizmo currently grid-snaps via `TransformControls translationSnap={snapGrid}`. Magnetic snapping needs an `onObjectChange`/drag handler that adjusts the dragged object toward nearby board faces/edges before commit. `store.snapGrid` is the grid setting; add magnetism on top.
-- **Collision broadphase** belongs in the geometry layer (chunk 9 evaluator) but a cheap AABB pass can feed `store.warnings` now. The lint panel (`DesignerShell.tsx` `LintList`) and the rail badge already render `store.warnings` (`Warning[]` from core); just populate it. The `UNRESOLVED_COLLISION` code exists in `@tenon/core` `common.ts`.
-- **Outliner** — a basic flat board list already ships in `DesignerShell.tsx` (`Outliner`). Chunk 8 adds groups/tree + drag.
-- **Context menu** — Radix `@radix-ui/react-context-menu` is installed. Wire it over the viewport + outliner, filtered by `registry.filtered(ctx)` per §19.3.
+**Where chunk 8 left the hooks:**
+- **Collision authority switch.** `modelStore.ts` currently fills `store.warnings` from the **client** broadphase (`src/lib/collision.ts` `recomputeWarnings`) on every model mutation, ignoring `OpResult.warnings`. Chunk 9 makes the server's Manifold narrowphase authoritative — start using `result.warnings` (and decide whether to keep the client broadphase as an instant-feedback layer during optimistic edits). The collision logic and the `UNRESOLVED_COLLISION` shape are settled; only the source changes.
+- **Per-board AABB / `worldAABB`** lives in `src/lib/collision.ts` (exact for 90° rotations). The evaluator's broadphase step (§6 step 4) can reuse it; narrowphase replaces the penetration test with a real intersection-volume check.
+- **Joint provenance → click-a-face** (§6 step 5): boards are flat meshes today (`BoardMesh` in `Viewport.tsx`). The evaluator emits indexed meshes with face provenance; the viewport will swap to evaluator output and add face-pick → joint highlight (chunk 11 joint dialog consumes it).
+- **Joints aren't selectable yet** — context-menu joint entries (Edit params/Disable/Delete) were deferred for that reason. Add `'joint'` to `CommandContext` (`registry.ts`) when joint meshes become pickable.
 
-**Store is the integration point:** `src/lib/modelStore.ts` (Zustand singleton) holds model/selection/mode/etc. Commands read it via `useModelStore.getState()`. New commands go in `src/lib/viewportCommands.ts`.
+**Store is the integration point:** `src/lib/modelStore.ts` (Zustand singleton). Commands read it via `useModelStore.getState()`. New commands go in `src/lib/viewportCommands.ts`.
 
-**Dependencies already installed:** `three`, `@react-three/fiber`, `@react-three/drei`, `@types/three`, `zustand`.
+**Dependencies already installed:** `three`, `@react-three/fiber`, `@react-three/drei`, `@types/three`, `zustand`. (`manifold-3d` is **not** yet a dependency — chunk 9 adds it. Read gotcha about golden tests / kernel upgrades, spec §6.1 / Known Issues.)
 
 ---
 
@@ -239,7 +253,13 @@ Chunk 8 = snapping (face/edge/end magnetism), collision broadphase, outliner pol
 
 10. **`clientOps.applyOpsLocal` mirrors the server `applyOps`** — the viewport applies ops optimistically with a client-side twin of `packages/server/src/lib/applyOps.ts`. If you change op semantics on the server, change both or optimistic state silently drifts until the next refetch (SSE/reload). The store has a rev safety net: an `ok` response whose rev ≠ optimistic rev triggers a refetch.
 
-11. **Undo is inverse-op based and goes through the validated pipeline** — `invertOps` builds undo ops; undo/redo POST them like any edit. A remote edit via SSE clears the undo stack (§3.3). The UI supplies explicit ids on every add so undo/redo are deterministic. `duplicate_board` is intentionally **not** invertible (server-assigned id) — the viewport never emits it (duplicate is done as `add_board` in chunk 8).
+11. **Undo is inverse-op based and goes through the validated pipeline** — `invertOps` builds undo ops; undo/redo POST them like any edit. A remote edit via SSE clears the undo stack (§3.3). The UI supplies explicit ids on every add so undo/redo are deterministic. `duplicate_board` is intentionally **not** invertible (server-assigned id) — the viewport never emits it (duplicate is done as `add_board` in chunk 8). Likewise `groupSelected` supplies an explicit `grp_` id so `group` is invertible (`invertOps` returns `[]` for an id-less `group`).
+
+15. **OrbitControls right-button is remapped (chunk 8)** — right-click is reserved for the context menu (§19.3), so `Viewport.tsx` sets `OrbitControls mouseButtons` to LEFT=rotate, MIDDLE=pan, RIGHT=disabled (wheel still zooms). OrbitControls `preventDefault`s the native contextmenu but doesn't `stopPropagation`, so the event still bubbles to the Radix `ContextMenu.Trigger` wrapping the canvas. If you re-enable right-drag pan, the context menu will pop after every right-drag — don't.
+
+16. **The gizmo owns grid + magnetic snap, not `TransformControls`** — `translationSnap` is `null`; all snapping happens in `onObjectChange` via `snapping.ts` `solveSnap`, and `commitTransform` only rounds float noise. If you re-add `translationSnap` or re-grid-snap in `commitTransform`, magnetic snaps get clobbered. Snap tunables (8px threshold, `[0.01,2]"` clamp, Alt-to-suspend, `[2,0,2]` duplicate offset) are in `Viewport.tsx` / `modelStore.ts` — snapping is meant to be iterated; see `docs/chunk8-design.md`.
+
+17. **Warnings are recomputed on every model set** — `modelStore` calls `recomputeWarnings` everywhere `model` is assigned (load/optimistic/reconcile/reject/undo/redo/SSE). If you add a new code path that sets `model`, set `warnings` alongside or lint goes stale. (Ch.9 replaces this with server narrowphase — see Chunk 9 Entry Conditions.)
 
 12. **Do not `dispose()` `useMemo`-created THREE objects in effect cleanups** — under React StrictMode (dev) the cleanup runs while the memo is retained, leaving the remount with dead materials. The viewport relies on WebGL context teardown (Canvas unmount) to free GPU memory instead. See comments in `Viewport.tsx` / `viewportResources.ts`.
 

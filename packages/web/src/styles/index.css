@@ -87,3 +87,18 @@ body {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
+
+/* Right-click context menu items — Radix sets [data-highlighted] on keyboard/mouse
+   focus; inline styles can't target it, so the highlight lives here (§19.3). */
+.ctx-item {
+  outline: none;
+  border-radius: var(--radius-s);
+}
+.ctx-item[data-highlighted] {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+.ctx-item[data-disabled] {
+  color: var(--text-faint);
+  pointer-events: none;
+}

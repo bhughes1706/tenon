@@ -7,13 +7,20 @@ import { useModelStore } from '../lib/modelStore.js'
 import { setViewportScene, syncViewportTheme } from '../lib/syncViewportTheme.js'
 import { speciesColor } from '../lib/speciesColors.js'
 import { formatInchesMark } from '../lib/fraction.js'
+import { worldAABB } from '../lib/collision.js'
 import { modelBounds } from './bounds.js'
+import { solveSnap, type AABB, type SnapGuide } from './snapping.js'
 import { createViewportResources, type ViewportResources } from './viewportResources.js'
 
 const deg2rad = (d: number) => (d * Math.PI) / 180
 const rad2deg = (r: number) => (r * 180) / Math.PI
 const round = (v: number, q = 1e-4) => Math.round(v / q) * q + 0 // +0 normalizes -0
+const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v))
 const voidRaycast = () => null
+
+// Magnetic snap pull radius, screen pixels — converted to world units per drag so
+// the feel is constant across zoom (§13 snapping). Tunable.
+const SNAP_PX = 8
 
 const VIEW_DIRS: Record<'iso' | 'front' | 'top', [number, number, number]> = {
   iso: [1, 0.8, 1],
@@ -117,12 +124,13 @@ function SceneContents({
   shadows: boolean
 }) {
   const controlsRef = useRef<{ target: THREE.Vector3; update: () => void } | null>(null)
+  const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera
+  const size = useThree((s) => s.size)
   const model = useModelStore((s) => s.model)
   const selection = useModelStore((s) => s.selection)
   const hovered = useModelStore((s) => s.hovered)
   const mode = useModelStore((s) => s.mode)
   const gizmoMode = useModelStore((s) => s.gizmoMode)
-  const snapGrid = useModelStore((s) => s.snapGrid)
   const dispatch = useModelStore((s) => s.dispatch)
 
   const meshRefs = useRef(new Map<string, THREE.Object3D>())
@@ -156,8 +164,32 @@ function SceneContents({
     if (mode !== 'measure') setMeasurePts([])
   }, [mode])
 
+  // Magnetic-snap drag state. The cache (set on gizmo mouse-down) holds the dragged
+  // board's half-extents + every other board's world AABB so the per-frame solver
+  // (snapping.ts) stays allocation-free. `snapGuides` are the live alignment hints.
+  const dragCache = useRef<{ half: [number, number, number]; others: AABB[] } | null>(null)
+  const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([])
+  const altPressed = useRef(false)
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { if (e.key === 'Alt') altPressed.current = true }
+    const up = (e: KeyboardEvent) => { if (e.key === 'Alt') altPressed.current = false }
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up) }
+  }, [])
+
   const onPointerDown = useCallback(
     (e: ThreeEvent<PointerEvent>, id: string) => {
+      if (e.nativeEvent.button === 2) {
+        // Right-click targets this board for the context menu (§19.3) without
+        // disturbing a multi-selection that already includes it. The native
+        // contextmenu fires next and opens the Radix menu against menuTarget.
+        e.stopPropagation()
+        const st = useModelStore.getState()
+        if (!st.selection.includes(id)) st.setSelection([id])
+        st.setMenuTarget(useModelStore.getState().selection.length > 1 ? 'multi' : 'board')
+        return
+      }
       const m = useModelStore.getState().mode
       if (m === 'measure') {
         e.stopPropagation()
@@ -173,15 +205,59 @@ function SceneContents({
     [],
   )
 
+  // Drag start: snapshot AABBs once (boards don't move mid-drag). Translate only —
+  // rotation uses the gizmo's own rotationSnap.
+  const onGizmoDown = useCallback(() => {
+    const m = useModelStore.getState().model
+    if (gizmoMode !== 'translate' || !selectedId || !m) {
+      dragCache.current = null
+      return
+    }
+    const others: AABB[] = []
+    let half: [number, number, number] = [0, 0, 0]
+    for (const b of m.boards) {
+      const box = worldAABB(b)
+      if (b.id === selectedId) {
+        half = [(box.max[0] - box.min[0]) / 2, (box.max[1] - box.min[1]) / 2, (box.max[2] - box.min[2]) / 2]
+      } else {
+        others.push(box)
+      }
+    }
+    dragCache.current = { half, others }
+  }, [gizmoMode, selectedId])
+
+  // Per-frame during a translate drag: pull the dragged object toward nearby board
+  // faces/edges/ends (magnetism), else grid. Alt suspends magnetism.
+  const onGizmoChange = useCallback(() => {
+    const cache = dragCache.current
+    if (!cache || !gizmoTarget) return
+    const magnetic = !altPressed.current
+    const d = camera.position.distanceTo(gizmoTarget.position)
+    const worldPerPx = (2 * d * Math.tan(deg2rad(camera.fov) / 2)) / Math.max(size.height, 1)
+    const threshold = clamp(SNAP_PX * worldPerPx, 0.01, 2)
+    const res = solveSnap({
+      center: [gizmoTarget.position.x, gizmoTarget.position.y, gizmoTarget.position.z],
+      half: cache.half,
+      others: cache.others,
+      grid: useModelStore.getState().snapGrid,
+      threshold,
+      magnetic,
+    })
+    gizmoTarget.position.set(res.pos[0], res.pos[1], res.pos[2])
+    setSnapGuides(res.guides)
+  }, [gizmoTarget, camera, size])
+
   const commitTransform = useCallback(() => {
+    setSnapGuides([])
+    dragCache.current = null
     if (!gizmoTarget || !selectedId) return
     const board = useModelStore.getState().model?.boards.find((b) => b.id === selectedId)
     if (!board) return
-    const snap = (v: number) => (snapGrid > 0 ? Math.round(v / snapGrid) * snapGrid : round(v, 1e-3))
+    // Position is already grid/magnet-snapped by onGizmoChange — just clean float noise.
     const pos: [number, number, number] = [
-      snap(gizmoTarget.position.x),
-      snap(gizmoTarget.position.y),
-      snap(gizmoTarget.position.z),
+      round(gizmoTarget.position.x, 1e-3),
+      round(gizmoTarget.position.y, 1e-3),
+      round(gizmoTarget.position.z, 1e-3),
     ]
     const rot: [number, number, number] = [
       round(rad2deg(gizmoTarget.rotation.x), 1e-3),
@@ -195,9 +271,10 @@ function SceneContents({
       rot.every((v, i) => Math.abs(v - board.transform.rot[i]) < 1e-6)
     if (unchanged) return
     void dispatch([{ op: 'transform_board', id: selectedId, pos, rot }])
-  }, [gizmoTarget, selectedId, snapGrid, dispatch])
+  }, [gizmoTarget, selectedId, dispatch])
 
   const measureColor = `#${resources.measureMat.color.getHexString()}`
+  const snapColor = `#${resources.snapMat.color.getHexString()}`
 
   return (
     <>
@@ -270,13 +347,37 @@ function SceneContents({
         </>
       )}
 
-      <OrbitControls ref={controlsRef as never} makeDefault enableDamping dampingFactor={0.12} />
+      {snapGuides.map((g, i) => (
+        <Line
+          key={`snap-${i}`}
+          points={[g.from, g.to]}
+          color={snapColor}
+          lineWidth={1.5}
+          dashed
+          dashSize={0.25}
+          gapSize={0.15}
+        />
+      ))}
+
+      {/* Right mouse is reserved for the context menu (§19.3): rotate on left,
+          pan on middle-drag, zoom on wheel. */}
+      <OrbitControls
+        ref={controlsRef as never}
+        makeDefault
+        enableDamping
+        dampingFactor={0.12}
+        mouseButtons={{ LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: undefined as unknown as THREE.MOUSE }}
+      />
       {gizmoTarget && mode === 'select' && (
         <TransformControls
           object={gizmoTarget}
           mode={gizmoMode}
-          translationSnap={snapGrid > 0 ? snapGrid : null}
+          // We own snapping (grid + magnetism) in onObjectChange so the two don't
+          // fight; the built-in translationSnap stays off (§13).
+          translationSnap={null}
           rotationSnap={deg2rad(15)}
+          onMouseDown={onGizmoDown}
+          onObjectChange={onGizmoChange}
           onMouseUp={commitTransform}
         />
       )}
@@ -312,8 +413,14 @@ export function Viewport({ precision, shadows }: { precision: number; shadows: b
       onCreated={({ scene }) => {
         scene.background = resources.background
       }}
-      onPointerMissed={() => {
+      onPointerMissed={(e) => {
         const st = useModelStore.getState()
+        if ((e as MouseEvent).button === 2) {
+          // Right-click on empty space → empty-space context menu (Add board, views).
+          st.setMenuTarget('empty')
+          st.clearSelection()
+          return
+        }
         if (st.mode === 'select') st.clearSelection()
       }}
       style={{ position: 'absolute', inset: 0 }}

@@ -104,4 +104,25 @@ describe('invertOps round-trips', () => {
     const start = model([board('brd_a')])
     expect(invertOps([{ op: 'duplicate_board', id: 'brd_a', offset: [1, 0, 0] }], start)).toEqual([])
   })
+
+  // Chunk 8: duplicateSelected emits add_board with an explicit id (not the
+  // non-invertible duplicate_board op) so the copy is undoable.
+  it('duplicate-as-add_board with explicit id round-trips', () => {
+    const start = model([board('brd_a')])
+    const copy = board('brd_copy', { name: 'left front leg copy', transform: { pos: [2, 0, 2], rot: [0, 0, 0] } })
+    const { after, restored } = roundTrip(start, [{ op: 'add_board', board: copy }])
+    expect(after.boards.map((b) => b.id)).toEqual(['brd_a', 'brd_copy'])
+    expect(norm(restored)).toEqual(norm(start))
+  })
+
+  // Chunk 8: groupSelected supplies an explicit grp_ id so group is invertible.
+  it('group ↔ ungroup round-trips when the group id is explicit', () => {
+    const start = model([board('brd_a'), board('brd_b')])
+    const { after, restored } = roundTrip(start, [
+      { op: 'group', member_ids: ['brd_a', 'brd_b'], id: 'grp_test01' },
+    ])
+    expect(after.groups).toHaveLength(1)
+    expect(after.groups[0].members).toEqual(['brd_a', 'brd_b'])
+    expect(norm(restored)).toEqual(norm(start))
+  })
 })

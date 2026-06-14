@@ -4,12 +4,14 @@ import {
   MousePointer2, Plus, Ruler, Layers, AlertTriangle, List,
   Undo2, Redo2, Moon, Sun, Hammer, Search, Move3d, RotateCw,
 } from 'lucide-react'
+import type { Board } from '@tenon/core'
 import { useAppCtx } from '../lib/AppContext.js'
 import { useModelStore, type DesignerPanel } from '../lib/modelStore.js'
 import { CommandPalette } from './CommandPalette.js'
 import { Viewport } from '../viewport/Viewport.js'
 import { Inspector } from './Inspector.js'
 import { AddBoardDialog } from './AddBoardDialog.js'
+import { ViewportContextMenu } from './ViewportContextMenu.js'
 
 const SNAP_CYCLE: Array<0.0625 | 0.03125 | 0> = [0.0625, 0.03125, 0]
 const SNAP_LABEL: Record<string, string> = { '0.0625': '1/16"', '0.03125': '1/32"', '0': 'off' }
@@ -120,6 +122,16 @@ export function DesignerShell() {
       if (meta && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         setPaletteOpen((v) => !v)
+        return
+      }
+      if (meta && e.key.toLowerCase() === 'd') {
+        e.preventDefault()
+        void s.duplicateSelected()
+        return
+      }
+      if (meta && e.key.toLowerCase() === 'g') {
+        e.preventDefault()
+        void s.groupSelected()
         return
       }
       if (meta) return // leave other browser/system combos alone
@@ -236,7 +248,9 @@ export function DesignerShell() {
 
       {/* ── Viewport ─────────────────────────────────────────────────── */}
       <div style={{ position: 'relative', overflow: 'hidden', background: 'var(--vp-bg)' }}>
-        <Viewport precision={precision} shadows={shadows} />
+        <ViewportContextMenu ctx={ctx}>
+          <Viewport precision={precision} shadows={shadows} />
+        </ViewportContextMenu>
 
         {/* Left overlay drawer */}
         {panel && (
@@ -350,33 +364,106 @@ function CenterNote({ children, danger }: { children: React.ReactNode; danger?: 
   )
 }
 
+function BoardRow({ board, selected, indent, onClick }: {
+  board: Board; selected: boolean; indent?: boolean; onClick: (e: React.MouseEvent) => void
+}) {
+  return (
+    <button onClick={onClick} style={{
+      textAlign: 'left', border: 'none', cursor: 'pointer', width: '100%',
+      background: selected ? 'var(--accent-subtle)' : 'transparent',
+      color: selected ? 'var(--accent)' : 'var(--text)',
+      padding: '4px var(--sp-2)', paddingLeft: indent ? 'var(--sp-5)' : 'var(--sp-2)',
+      borderRadius: 'var(--radius-s)', fontSize: 'var(--text-sm)', fontFamily: 'inherit',
+      display: 'flex', justifyContent: 'space-between', gap: 'var(--sp-2)',
+    }}>
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{board.name}</span>
+      <span style={{ color: 'var(--text-faint)', fontSize: 'var(--text-xs)' }}>{board.kind}</span>
+    </button>
+  )
+}
+
+// §19.3 — boards/groups tree. Groups are a selection/organization convenience
+// (no geometric meaning); selecting a group selects its members. Create from a
+// ≥2-board selection; dissolve via the group row's ungroup button.
 function Outliner() {
   const model = useModelStore((s) => s.model)
   const selection = useModelStore((s) => s.selection)
   const toggle = useModelStore((s) => s.toggleSelection)
+  const setSelection = useModelStore((s) => s.setSelection)
+  const groupSelected = useModelStore((s) => s.groupSelected)
+  const ungroup = useModelStore((s) => s.ungroup)
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+
   if (!model || model.boards.length === 0) {
     return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-faint)', padding: 'var(--sp-2)' }}>No boards yet — press B to add one.</span>
   }
+
+  const boardById = new Map(model.boards.map((b) => [b.id, b]))
+  const grouped = new Set(model.groups.flatMap((g) => g.members))
+  const ungroupedBoards = model.boards.filter((b) => !grouped.has(b.id))
+  const rowClick = (id: string) => (e: React.MouseEvent) => toggle(id, e.shiftKey || e.metaKey || e.ctrlKey)
+  const toggleCollapse = (id: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column' }}>
-      {model.boards.map((b) => {
-        const sel = selection.includes(b.id)
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+      {selection.length >= 2 && (
+        <button onClick={() => void groupSelected()} style={{
+          textAlign: 'left', border: '1px solid var(--border)', cursor: 'pointer',
+          background: 'var(--surface-sunken)', color: 'var(--text-muted)',
+          padding: '4px var(--sp-2)', borderRadius: 'var(--radius-s)', marginBottom: 2,
+          fontSize: 'var(--text-xs)', fontFamily: 'inherit',
+        }}>＋ Group {selection.length} boards (⌘G)</button>
+      )}
+
+      {model.groups.map((g) => {
+        const members = g.members.map((id) => boardById.get(id)).filter((b): b is Board => !!b)
+        const allSel = members.length > 0 && members.every((b) => selection.includes(b.id))
+        const isCollapsed = collapsed.has(g.id)
         return (
-          <button key={b.id}
-            onClick={(e) => toggle(b.id, e.shiftKey || e.metaKey || e.ctrlKey)}
-            style={{
-              textAlign: 'left', border: 'none', cursor: 'pointer',
-              background: sel ? 'var(--accent-subtle)' : 'transparent',
-              color: sel ? 'var(--accent)' : 'var(--text)',
-              padding: '4px var(--sp-2)', borderRadius: 'var(--radius-s)',
-              fontSize: 'var(--text-sm)', fontFamily: 'inherit',
-              display: 'flex', justifyContent: 'space-between', gap: 'var(--sp-2)',
-            }}>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</span>
-            <span style={{ color: 'var(--text-faint)', fontSize: 'var(--text-xs)' }}>{b.kind}</span>
-          </button>
+          <div key={g.id}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <button onClick={() => toggleCollapse(g.id)} title={isCollapsed ? 'Expand' : 'Collapse'} style={{
+                border: 'none', background: 'transparent', cursor: 'pointer',
+                color: 'var(--text-faint)', width: 16, fontSize: 10, padding: 0,
+              }}>{isCollapsed ? '▸' : '▾'}</button>
+              <button onClick={(e) => setSelection(
+                e.shiftKey || e.metaKey || e.ctrlKey
+                  ? [...new Set([...selection, ...members.map((b) => b.id)])]
+                  : members.map((b) => b.id),
+              )} style={{
+                flex: 1, textAlign: 'left', border: 'none', cursor: 'pointer',
+                background: allSel ? 'var(--accent-subtle)' : 'transparent',
+                color: allSel ? 'var(--accent)' : 'var(--text)',
+                padding: '4px var(--sp-2)', borderRadius: 'var(--radius-s)',
+                fontSize: 'var(--text-sm)', fontFamily: 'inherit', fontWeight: 600,
+                display: 'flex', justifyContent: 'space-between', gap: 'var(--sp-2)', overflow: 'hidden',
+              }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {g.name || 'Group'}
+                </span>
+                <span style={{ color: 'var(--text-faint)', fontSize: 'var(--text-xs)' }}>{members.length}</span>
+              </button>
+              <button onClick={() => void ungroup(g.id)} title="Ungroup" style={{
+                border: 'none', background: 'transparent', cursor: 'pointer',
+                color: 'var(--text-faint)', width: 20, fontSize: 13, padding: 0,
+              }}>⊟</button>
+            </div>
+            {!isCollapsed && members.map((b) => (
+              <BoardRow key={b.id} board={b} indent selected={selection.includes(b.id)} onClick={rowClick(b.id)} />
+            ))}
+          </div>
         )
       })}
+
+      {ungroupedBoards.map((b) => (
+        <BoardRow key={b.id} board={b} selected={selection.includes(b.id)} onClick={rowClick(b.id)} />
+      ))}
     </div>
   )
 }

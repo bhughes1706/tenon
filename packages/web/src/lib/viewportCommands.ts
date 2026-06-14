@@ -10,9 +10,9 @@ const inDesigner = (ctx: AppCtx) => ctx.scene !== null
 export function registerViewportCommands(): void {
   const store = () => useModelStore.getState()
 
-  // Modes (§19.2)
+  // Modes (§19.2). Add Board also serves the empty-space context menu.
   registry.register({ id: 'select', label: 'Select Tool', icon: 'MousePointer2', shortcut: 'V', group: 'Tools', when: inDesigner, run: () => store().setMode('select') })
-  registry.register({ id: 'add_board', label: 'Add Board', icon: 'Plus', shortcut: 'B', group: 'Tools', when: inDesigner, run: () => store().openAddDialog() })
+  registry.register({ id: 'add_board', label: 'Add Board', icon: 'Plus', shortcut: 'B', group: 'Tools', contexts: ['empty'], when: inDesigner, run: () => store().openAddDialog() })
   registry.register({ id: 'measure', label: 'Measure', icon: 'Ruler', shortcut: 'M', group: 'Tools', when: inDesigner, run: () => store().setMode('measure') })
 
   // Edit
@@ -20,12 +20,35 @@ export function registerViewportCommands(): void {
   registry.register({ id: 'redo', label: 'Redo', icon: 'Redo2', shortcut: '⌘⇧Z', group: 'Edit', when: inDesigner, run: () => void store().redo() })
   registry.register({
     id: 'delete_selection',
-    label: 'Delete Selected',
+    label: 'Delete',
     icon: 'Trash2',
     shortcut: '⌫',
     group: 'Edit',
+    contexts: ['board', 'multi'],
     when: (ctx) => inDesigner(ctx) && ctx.selection.length > 0,
     run: () => void store().removeSelected(),
+  })
+
+  registry.register({
+    id: 'duplicate',
+    label: 'Duplicate',
+    icon: 'Copy',
+    shortcut: '⌘D',
+    group: 'Edit',
+    contexts: ['board', 'multi'],
+    when: (ctx) => inDesigner(ctx) && ctx.selection.length > 0,
+    run: () => void store().duplicateSelected(),
+  })
+
+  registry.register({
+    id: 'group_selection',
+    label: 'Group',
+    icon: 'Group',
+    shortcut: '⌘G',
+    group: 'Edit',
+    contexts: ['multi'],
+    when: (ctx) => inDesigner(ctx) && ctx.selection.length >= 2,
+    run: () => void store().groupSelected(),
   })
 
   // Joint creation is contextual on two selected boards (§19.2); the dialog and
@@ -45,10 +68,10 @@ export function registerViewportCommands(): void {
   registry.register({ id: 'toggle_lint', label: 'Toggle Lint Panel', icon: 'AlertTriangle', group: 'View', when: inDesigner, run: () => store().togglePanel('lint') })
   registry.register({ id: 'toggle_cutlist', label: 'Toggle Cut List', icon: 'List', group: 'View', when: inDesigner, run: () => store().togglePanel('cutlist') })
 
-  // View presets (§19.3)
-  registry.register({ id: 'view_iso', label: 'Isometric View', icon: 'Box', group: 'View', when: inDesigner, run: () => store().requestView('iso') })
-  registry.register({ id: 'view_front', label: 'Front View', icon: 'Square', group: 'View', when: inDesigner, run: () => store().requestView('front') })
-  registry.register({ id: 'view_top', label: 'Top View', icon: 'Square', group: 'View', when: inDesigner, run: () => store().requestView('top') })
+  // View presets (§19.3). Tagged 'empty' so they form the empty-space menu's View submenu.
+  registry.register({ id: 'view_iso', label: 'Isometric View', icon: 'Box', group: 'View', contexts: ['empty'], when: inDesigner, run: () => store().requestView('iso') })
+  registry.register({ id: 'view_front', label: 'Front View', icon: 'Square', group: 'View', contexts: ['empty'], when: inDesigner, run: () => store().requestView('front') })
+  registry.register({ id: 'view_top', label: 'Top View', icon: 'Square', group: 'View', contexts: ['empty'], when: inDesigner, run: () => store().requestView('top') })
 }
 
 registerViewportCommands()
