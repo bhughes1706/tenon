@@ -31,6 +31,7 @@ const VIEW_DIRS: Record<'iso' | 'front' | 'top', [number, number, number]> = {
 // ── One board ────────────────────────────────────────────────────────────────
 function BoardMesh({
   board,
+  carved,
   selected,
   hovered,
   resources,
@@ -39,6 +40,7 @@ function BoardMesh({
   mode,
 }: {
   board: Board
+  carved: THREE.BufferGeometry | undefined
   selected: boolean
   hovered: boolean
   resources: ViewportResources
@@ -48,13 +50,18 @@ function BoardMesh({
 }) {
   const [rx, ry, rz] = board.transform.rot
   const color = useMemo(() => speciesColor(board.species), [board.species])
-  // One box geometry feeds both the solid and its outline. Not manually disposed:
-  // R3F tears down the WebGL context on Canvas unmount (freeing the buffers), and
-  // disposing a useMemo'd object in an effect cleanup is unsafe under StrictMode.
-  const geom = useMemo(
+  // Flat box fallback while the worker carves (or for joint-free boards). Not manually
+  // disposed: R3F tears down the WebGL context on Canvas unmount (freeing the buffers),
+  // and disposing a useMemo'd object in an effect cleanup is unsafe under StrictMode.
+  const boxGeom = useMemo(
     () => new THREE.BoxGeometry(board.dims.l, board.dims.w, board.dims.t),
     [board.dims.l, board.dims.w, board.dims.t],
   )
+  // Carved mesh comes back in the board's LOCAL frame (centred at origin, same as the
+  // box), so the <group> transform places it identically — the gizmo still moves the
+  // board, not the geometry (chunk 9 §5). The carved geometry is owned by the store
+  // (disposed there on replace); never dispose it here.
+  const geom = carved ?? boxGeom
   const outlineMat = selected ? resources.selectionMat : resources.hoverMat
 
   return (
@@ -127,11 +134,20 @@ function SceneContents({
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera
   const size = useThree((s) => s.size)
   const model = useModelStore((s) => s.model)
+  const meshes = useModelStore((s) => s.meshes)
   const selection = useModelStore((s) => s.selection)
   const hovered = useModelStore((s) => s.hovered)
   const mode = useModelStore((s) => s.mode)
   const gizmoMode = useModelStore((s) => s.gizmoMode)
   const dispatch = useModelStore((s) => s.dispatch)
+
+  // Re-carve geometry on every model change (load/optimistic/undo/redo/SSE). The
+  // worker coalesces bursts and the store drops stale results; boards fall back to a
+  // flat box until their carved mesh lands (chunk 9 §5). Spawns the worker lazily on
+  // first run (designer mount), so the jobs/photos bundle never pulls the WASM.
+  useEffect(() => {
+    useModelStore.getState().evaluateGeometry()
+  }, [model])
 
   const meshRefs = useRef(new Map<string, THREE.Object3D>())
   const registerRef = useCallback((id: string, obj: THREE.Object3D | null) => {
@@ -308,6 +324,7 @@ function SceneContents({
         <BoardMesh
           key={b.id}
           board={b}
+          carved={meshes.get(b.id)}
           selected={selection.includes(b.id)}
           hovered={hovered === b.id}
           resources={resources}

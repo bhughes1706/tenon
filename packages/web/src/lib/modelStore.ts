@@ -9,6 +9,11 @@ import { applyOpsLocal, invertOps } from './clientOps.js'
 import { recomputeWarnings } from '@tenon/core'
 import type { ViewportScene } from './syncViewportTheme.js'
 import type { CommandContext } from './registry.js'
+// Type-only — the value (THREE) never lands in this module's bundle. Carved
+// geometries are built in geometryClient, which the store reaches only via a
+// dynamic import() inside evaluateGeometry (keeps THREE + the worker out of the
+// main jobs/photos bundle).
+import type { BufferGeometry } from 'three'
 
 export type ViewportMode = 'select' | 'add' | 'measure'
 export type GizmoMode = 'translate' | 'rotate'
@@ -34,6 +39,9 @@ interface ModelState {
   gizmoMode: GizmoMode
   panel: DesignerPanel
   warnings: Warning[]
+  // Worker-carved board geometries (chunk 9 §5). Boards absent from the map fall
+  // back to a flat <boxGeometry> in the viewport while the worker computes.
+  meshes: Map<string, BufferGeometry>
   snapGrid: number // inches; 0 = off (§20.5)
   scene: ViewportScene | null
   addDialogOpen: boolean
@@ -53,6 +61,10 @@ interface ModelState {
   dispatch: (ops: Op[]) => Promise<boolean>
   undo: () => Promise<void>
   redo: () => Promise<void>
+
+  // Re-run the geometry worker for the current model and adopt the carved meshes.
+  // Called by the viewport on every model change; latest-wins, dispose-on-replace.
+  evaluateGeometry: () => Promise<void>
 
   addBoard: (board: Board) => Promise<void>
   removeSelected: () => Promise<void>
@@ -76,6 +88,19 @@ interface ModelState {
   setMenuTarget: (target: CommandContext | null) => void
   dismissToast: () => void
   connectEvents: () => () => void
+}
+
+// Monotonic guard so a slow eval that resolves after a newer one started is dropped
+// (the geometry worker also coalesces, but an already-sent eval still resolves stale).
+let evalSeq = 0
+
+// Free every geometry in a map (dispose-on-replace, §4). Safe because the store is a
+// singleton — this is NOT a React effect cleanup, so it dodges the StrictMode trap
+// (handoff #12): we only ever dispose geometries that are being replaced or dropped.
+function disposeMeshes(meshes: Map<string, BufferGeometry>, keep?: Map<string, BufferGeometry>) {
+  for (const [id, g] of meshes) {
+    if (!keep || keep.get(id) !== g) g.dispose()
+  }
 }
 
 export const useModelStore = create<ModelState>((set, get) => {
@@ -113,11 +138,10 @@ export const useModelStore = create<ModelState>((set, get) => {
         const fresh = await fetchModel(modelId).catch(() => optimistic)
         set({ model: fresh, warnings: recomputeWarnings(fresh), saving: false })
       } else {
-        // Adopt the server's authoritative warnings (collision narrowphase +
-        // precondition re-derivation, §6). Same core code → no flicker vs. the
-        // optimistic pass above.
-        const synced = { ...optimistic, rev: result.rev }
-        set({ model: synced, warnings: result.warnings, saving: false })
+        // Geometry is identical to the optimistic model (same rev — §3.2). Only adopt
+        // the server's authoritative warnings; leaving `model` unchanged means the
+        // viewport useEffect([model]) does NOT re-trigger a redundant worker carve.
+        set({ warnings: result.warnings, saving: false })
       }
       return true
     }
@@ -148,6 +172,7 @@ export const useModelStore = create<ModelState>((set, get) => {
     gizmoMode: 'translate',
     panel: null,
     warnings: [],
+    meshes: new Map(),
     snapGrid: 0.0625,
     scene: null,
     addDialogOpen: false,
@@ -157,6 +182,10 @@ export const useModelStore = create<ModelState>((set, get) => {
     redoStack: [],
 
     async load(id) {
+      // Bump the eval guard so an in-flight eval for the previous model can't land
+      // its meshes after this load, and free the previous model's geometries.
+      evalSeq++
+      disposeMeshes(get().meshes)
       set({
         modelId: id,
         loading: true,
@@ -166,6 +195,7 @@ export const useModelStore = create<ModelState>((set, get) => {
         undoStack: [],
         redoStack: [],
         warnings: [],
+        meshes: new Map(),
       })
       try {
         const model = await fetchModel(id)
@@ -210,6 +240,25 @@ export const useModelStore = create<ModelState>((set, get) => {
           undoStack: [...s.undoStack, entry],
         }))
       }
+    },
+
+    async evaluateGeometry() {
+      const model = get().model
+      if (!model) return
+      const seq = ++evalSeq
+      const { carve } = await import('./geometryClient.js')
+      const result = await carve(model)
+      if (!result) return // superseded by the worker's coalescing, or eval failed
+      const next = new Map<string, BufferGeometry>()
+      for (const b of result.boards) next.set(b.id, b.geometry)
+      // A newer evaluateGeometry started while we awaited → our meshes are stale.
+      if (seq !== evalSeq) {
+        disposeMeshes(next)
+        return
+      }
+      const prev = get().meshes
+      set({ meshes: next })
+      disposeMeshes(prev, next) // free the geometries we just replaced
     },
 
     async addBoard(board) {

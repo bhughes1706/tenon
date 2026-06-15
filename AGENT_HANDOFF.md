@@ -1,6 +1,6 @@
 # Tenon — Agent Handoff Document
 
-**Date:** 2026-06-14 (chunk 9 IN PROGRESS — Stage 2 done, Stage 3 partial; see below)  
+**Date:** 2026-06-14 (chunk 9 IN PROGRESS — Stages 2 & 3 done; Stage 4 = JointFns is next; see below)  
 **Repo:** https://github.com/bhughes1706/tenon  
 **Spec:** `/Users/Brian/Downloads/tenon-spec-v0.4.md` (always load this — it is the ground truth)
 
@@ -14,21 +14,24 @@ Chunk 9 (geometry evaluator) is being built in the 5 stages of `docs/chunk9-desi
 | Stage | What | Status |
 |---|---|---|
 | 1. Spike | manifold-3d boots + carves in worker/vitest | ✅ **committed** (`12e21ee`) |
-| 2. Analytic core | `geometry/{aabb,preconditions,collision}` + tests, validateOps step 3, server + store warning authority | ✅ **DONE, green, UNCOMMITTED** |
-| 3. Eval skeleton | solids/evaluate/mesh (base + grooves), worker RPC, store meshes, viewport swap, delete spike scaffolding | 🟡 **STARTED** — only `eval/types.ts` + `worldBoxToLocal` written |
-| 4. Six JointFns | housing→rabbet→half_lap→butt→bridle→mortise_tenon + golden/property tests | ⬜ not started |
+| 2. Analytic core | `geometry/{aabb,preconditions,collision}` + tests, validateOps step 3, server + store warning authority | ✅ **committed** (`236ae41`) |
+| 3. Eval skeleton | solids/evaluate/mesh (base + grooves), worker RPC, store meshes, viewport swap, delete spike scaffolding | ✅ **DONE, green, UNCOMMITTED** |
+| 4. Six JointFns | housing→rabbet→half_lap→butt→bridle→mortise_tenon + golden/property tests | ⬜ **NEXT** — not started |
 | 5. Provenance/memo/perf | + docs + handoff | ⬜ not started |
 
-**Nothing this session is committed.** Everything below is in the working tree. (There are also unrelated pre-existing uncommitted chunk-8 follow-ups: `lib/groups.ts`, `lib/registry.test.ts`, the `liveMembers` wiring in `DesignerShell.tsx`, `ViewportContextMenu.tsx` — leave them.)
+**Stages 1–2 are committed** (`12e21ee`, `236ae41`). Stage 3 + peer-review follow-ups are in the working tree. (There are also unrelated pre-existing uncommitted chunk-8 follow-ups: `lib/groups.ts`, `lib/registry.test.ts`, the `liveMembers` wiring in `DesignerShell.tsx`, `ViewportContextMenu.tsx` — leave them.)
 
 ### Verify current state
 ```bash
 corepack pnpm --filter @tenon/core build      # build first — web/server depend on dist
-corepack pnpm --filter @tenon/core typecheck && corepack pnpm --filter @tenon/core test     # 78 pass
+corepack pnpm --filter @tenon/core typecheck && corepack pnpm --filter @tenon/core test     # 77 pass
 corepack pnpm --filter @tenon/web typecheck   && corepack pnpm --filter @tenon/web test      # 65 pass
 corepack pnpm --filter @tenon/server typecheck && corepack pnpm --filter @tenon/server test  # 16 pass
+corepack pnpm --filter @tenon/web build        # prod build: emits geometry.worker + manifold.wasm assets; main bundle stays ~401 KB (no THREE/WASM)
 ```
-Counts moved: core 50→**78** (+aabb/collision/preconditions tests + 3 step-3 tests); web 73→**65** (the 8 collision tests moved into core).
+Counts: core **77** (Stage 3 dropped the 4 spike tests, added 3 `eval/evaluate` tests: 78−4+3); web **65** (unchanged); server **16**. **Server bundle has 0 manifold refs** (`grep -rci manifold packages/server/dist/index.js` → 0) — design §6 invariant holds.
+
+> ⚠️ **NOT headless-verified this session.** Typecheck + unit tests + the vite prod build are green, but the carved-mesh viewport render was not screenshotted (the puppeteer-swiftshader recipe in handoff §"Local Verification" wasn't run). First Stage-4 task or a manual check: load a model, confirm boards render from the worker (carved `<bufferGeometry>`) with correct selection/hover outlines, and a board with an `edge_groove` shows the slot.
 
 ### Stage 2 — DONE (files in working tree)
 **New (core):** `src/geometry/aabb.ts` (worldAABB, worldOBB, overlapRegion, intersectVolume, isAxisAligned, eulerXYZToMat3/applyMat3/transpose, **worldBoxToLocal**, extent/center, types Vec3/AABB/OBB) · `src/geometry/collision.ts` (recomputeWarnings, narrowphase seam, COLLISION_VOL_EPS=1e-6) · `src/geometry/preconditions.ts` (checkJointPrecondition, CONTACT_TOL=1/64, MT_MIN_ENGAGEMENT=0.5) · `src/geometry/index.ts` · `src/geometry/__tests__/{aabb,collision,preconditions}.test.ts`.
@@ -36,20 +39,27 @@ Counts moved: core 50→**78** (+aabb/collision/preconditions tests + 3 step-3 t
 **Modified (server):** `routes/models.ts` — `OpResult.warnings = [...validation.warnings, ...recomputeWarnings(updated)]` (collision authority, §6).
 **Modified (web):** `lib/modelStore.ts` — `recomputeWarnings` now from `@tenon/core`; **adopts `result.warnings` on the ok branch** · `viewport/Viewport.tsx` — `worldAABB` from `@tenon/core` · `viewport/bounds.ts` — rewritten to call core `worldAABB`. **Deleted:** `lib/collision.ts`, `lib/collision.test.ts` (logic now in core).
 
-### Stage 3 — STARTED (only these written)
-- `src/geometry/aabb.ts` → **`worldBoxToLocal(board, worldAABB)`** (world box → board-local AABB; exact for 90°; the seam JointFns use to make local cutters).
-- `src/eval/types.ts` (NEW) → `EvalMesh`, `CutFeature`/`CutFeatureKind`, `CutterBox`, `CutterSet`, `BoardSolid`, `EvalCtx`, `JointFn`, `EvalResult`.
+### Stage 3 — DONE (files in working tree)
+The full base+groove carve pipeline runs end-to-end: worker → store → viewport. Boards render from worker-carved `<bufferGeometry>` (flat box fallback while computing / for joint-free boards). Joint cutters are the only thing left — they slot into `evaluate.ts`'s existing `cutterBoxes` array (Stage 4).
 
-**Stage 3 remaining (next agent's first job):**
-1. `eval/solids.ts` — `baseSolid(M, board)` = `Manifold.cube([l,w,t], true)` (LOCAL frame, centred) minus edge-groove cutters; box builder; groove→local-box (see "edge groove convention" gotcha below).
-2. `eval/mesh.ts` — Manifold → `EvalMesh`: `calculateNormals(3,60)` then de-interleave positions(0–2)/normals(3–5) at stride `numProp`, copy `triVerts`→index, provenance via `runOriginalID`/`runIndex`. ⚠️ **calculateNormals+getMesh interleaving is UNVERIFIED** — write a test asserting `normals.length===positions.length` and ~unit length; fallback is main-thread `computeVertexNormals()`.
-3. `eval/evaluate.ts` — pipeline: per board `baseSolid` (+ grooves now; joint cutters Stage 4) → one batched `subtract(union(cutters))` → `EvalMesh`. Returns `{ boards, warnings }`. **Delete all WASM objects after `getMesh()`** (memory; getMesh forces evaluation first).
-4. `eval/index.ts` — export `evaluate` + types; **remove** the spike exports.
-5. `workers/geometry.worker.ts` — replace spike RPC with `{reqId, model}` → `{reqId, boards:[…], warnings}`, ArrayBuffers in transfer list, **latest-wins** by reqId, `getManifold()` warmed once.
-6. `lib/geometryClient.ts` (NEW) — promise wrapper (lazy worker spawn, one in-flight); rebuilds `BufferGeometry` from buffers.
-7. `lib/modelStore.ts` — add `meshes: Map<boardId, …>` + an async action that re-runs the worker after every model set (StrictMode: dispose carved geometry on replace/unmount only — handoff #12).
-8. `viewport/Viewport.tsx` `BoardMesh` — render `<bufferGeometry>` when `meshes.get(id)` exists, else `<boxGeometry>` (current). Re-derive selection/hover `EdgesGeometry` off the carved buffer.
-9. **Delete spike scaffolding:** `eval/spike.ts`, `eval/__tests__/spike.test.ts`, `web/spike.html`, `web/src/spike-main.ts`, and in `web/vite.config.ts` the `build.rollupOptions.input` spike entry (keep `optimizeDeps.exclude` + `worker.format`).
+**New (core/eval):** `src/eval/solids.ts` (`baseSolid`, **`buildCutter`** = box→Manifold prism + captured `originalID` for provenance, `edgeGrooveCutters` = §3.4 grooves→local CutterBoxes, `OVERCUT=0.01`) · `src/eval/mesh.ts` (`toEvalMesh`: Manifold `getMesh()` → **de-indexed per-face flat normals** + per-triangle provenance from `runOriginalID`/`runIndex`) · `src/eval/evaluate.ts` (`evaluate(model)` → per-board `baseSolid` + grooves → one batched `subtract(union(cutters))` → `EvalMesh`; frees every WASM object in a `finally`) · `src/eval/__tests__/evaluate.test.ts` (3 tests: volume, unit normals, idempotence, groove provenance).
+**Modified (core/eval):** `src/eval/index.ts` — exports `evaluate`/`baseSolid`/`buildCutter`/`edgeGrooveCutters`/`toEvalMesh`/`OVERCUT` + all `types`; **spike exports removed**.
+**New (web):** `src/lib/geometryClient.ts` — `carve(model)`: lazy-spawn worker, coalesce bursts (1 in-flight + 1 queued, latest wins → superseded callers get `null`), rebuild `BufferGeometry`. **Pulls THREE — imported ONLY via `import()` from the store**, so the main bundle stays THREE/WASM-free.
+**Modified (web):** `src/workers/geometry.worker.ts` — real `{reqId, model}` → `{reqId, ok, boards, warnings}` RPC, buffers in transfer list, `getManifold()` warmed on spawn · `src/lib/modelStore.ts` — `meshes: Map<id, BufferGeometry>` + `evaluateGeometry()` action (dynamic-imports geometryClient; `evalSeq` latest-wins guard; **dispose-on-replace**, dispose+clear on `load`) · `src/viewport/Viewport.tsx` — `BoardMesh` renders `carved ?? boxGeom`; `SceneContents` re-carves via `useEffect([model])`; carved edges derive from the same geom.
+**Deleted:** `eval/spike.ts`, `eval/__tests__/spike.test.ts`, `web/spike.html`, `web/src/spike-main.ts`; `vite.config.ts` spike `rollupOptions.input` (kept `optimizeDeps.exclude` + `worker.format`).
+
+### Decisions made in Stage 3 (locked — Stage 4 must follow)
+1. **Normals: de-index, don't trust `calculateNormals`.** A node probe showed manifold-3d 3.5.1 `calculateNormals(3,…)` puts normals at channel **6**, not 3 (numProp went to 9) — the nonzero-`normalIdx` path is unreliable. `mesh.ts` instead uses plain `getMesh()` and **de-indexes into per-face flat normals** (every triangle gets its own 3 verts + the triangle's geometric normal). v1 boards are planar, so flat normals are physically exact, version-proof, and deterministic (idempotence holds). The old "calculateNormals UNVERIFIED" gotcha is **resolved/obsolete**.
+2. **Provenance via `runOriginalID`/`runIndex` (probe-verified).** Capture `cube.originalID()` *before* `translate` (translate makes a product, `originalID()`→−1); the leaf ID survives `union` and `subtract` (probe: 2 cutters unioned → runs `[1,2,3]`). The source cube can be `delete()`d right after `translate` — the integer ID persists. `buildCutter` returns `{manifold, originalId}`; `evaluate` builds `Map<originalID → feature index>`; `toEvalMesh` walks the run table to fill the per-triangle `Uint16Array`. **Feature 0 = base; grooves/joints append.** Unknown IDs default to 0 (never crash).
+3. **One batched `subtract(union(cutters))` per board** (design §2d) — confirmed to preserve per-cutter provenance, so Stage 4 joints get correct per-feature tagging from the single boolean.
+4. **Eval is triggered from the viewport, not the store's set sites.** `SceneContents` `useEffect([model])` → `evaluateGeometry()`. This scopes the worker spawn to designer-mount and keeps the store free of THREE/worker static imports. Don't move the trigger into `applyAndPost` (would spawn the worker app-wide).
+5. **Carved meshes are board-LOCAL** (centred at origin, same as the box). The R3F `<group>` keeps `board.transform`; the gizmo still moves the *board*. Stage-4 JointFns must emit `CutterBox` in the **target board's local frame** (use `worldBoxToLocal` from `core/geometry`).
+6. **Worker warnings are `[]` for now.** `evaluate` returns `{boards, warnings}` but Stage 3 emits no joint warnings; the store **ignores** worker warnings (collision/preconditions stay analytic + server-authoritative). Stage 4 wires THIN_TENON/THIN_MORTISE_WALL/NEAR_THROUGH/JOINT_FEATURE_UNIMPLEMENTED through `evaluate`'s `warnings` and decides how the store merges them.
+
+### Stage 4 entry points (where joints plug in)
+- **JointFn contract is already typed** in `eval/types.ts`: `JointFn = (a, b, params, ctx) → CutterSet { a: CutterBox[], b: CutterBox[], warnings }` — pure box math, **no WASM** (so JointFns are unit-testable and *could* run server-side for warnings later). `BoardSolid` carries `aabb`+`obb`.
+- **`evaluate.ts` `evaluateBoard`** currently seeds `cutterBoxes = edgeGrooveCutters(board)`. Stage 4: for each enabled joint touching this board, call the type's `JointFn`, push its `cuttersA`/`cuttersB` (whichever targets this board) into `cutterBoxes`, and merge `warnings`. The `Map<originalID→feature>` + batched subtract already handle provenance/perf — **no pipeline change needed**, only feeding more `CutterBox`es with the right `feature`/`jointId`.
+- **Build order** (§14): `housing → rabbet → half_lap → butt → bridle → mortise_tenon`, each with golden + property tests as it lands (§6.1: containment, volume ±0.001, complement, idempotence, manifold-validity). Use `CutFeatureKind` values already in `types.ts` (`mortise`/`tenon_cheek`/`shoulder`/`rabbet`/`dado`/`lap`/`slot`/`cheek`/`haunch`).
 
 ### Locked design decisions the next agent MUST follow (consistency)
 1. **Local-space carve** (design §5, gotcha #5): carve each board in its OWN local frame (box at origin, dims along x/y/z); R3F keeps `board.transform` position/rotation. Collision/preconditions use **world** AABBs from `core/geometry`. Don't mix frames.
@@ -60,7 +70,7 @@ Counts moved: core 50→**78** (+aabb/collision/preconditions tests + 3 step-3 t
 
 ### Gotchas found this session
 - **Step-3 preconditions reject non-overlapping joints.** The chunk-1 test fixtures placed boards apart; `BOARD_B` was moved to `[20,0,0]` so housing/M&T between A and B is geometrically valid. **Any new joint test fixture must use genuinely overlapping boards** or the precondition rejects it.
-- **Edge-groove convention** (no spec text was loaded for §3.4 edges — pick & document): top/bottom = ±y(width) edges running along x(length); left/right = ±x(length) ends running along y(width); groove `depth` cuts inward from the edge, `width` is the z(thickness) extent, `offset` shifts it along z. Overcut the OPEN face by ~0.01" for a clean coplanar cut (gotcha #4); don't overcut stops. **Confirm against the spec when available.**
+- **Edge-groove convention** (no spec text was loaded for §3.4 edges — picked & **implemented in `eval/solids.ts` `edgeGrooveCutters`**): top/bottom = ±y(width) edges running along x(length); left/right = ±x(length) ends running along y(width) (right=+x, left=−x); groove `depth` cuts inward from the edge, `width` is the z(thickness) extent, `offset` shifts it along z. Mouth + run-ends overcut by `OVERCUT`=0.01" (gotcha #4); `stop_near`/`stop_far` pull the run ends in instead. **Confirm against the spec when available** — if it differs, only `edgeGrooveCutters` changes.
 
 ---
 

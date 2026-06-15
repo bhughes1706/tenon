@@ -4,4 +4,17 @@
 // (src/index.ts) must never re-export from here, so the server bundle and the
 // jobs/photos PWA stay WASM-free.
 export { getManifold } from './manifold.js'
-export { carveBoxProbe, type CarveProbeResult } from './spike.js'
+export { evaluate } from './evaluate.js'
+export { baseSolid, buildCutter, edgeGrooveCutters, OVERCUT } from './solids.js'
+export { toEvalMesh } from './mesh.js'
+export type {
+  EvalMesh,
+  EvalResult,
+  CutFeature,
+  CutFeatureKind,
+  CutterBox,
+  CutterSet,
+  BoardSolid,
+  EvalCtx,
+  JointFn,
+} from './types.js'

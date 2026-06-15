@@ -11,7 +11,7 @@
 import type { Model } from '../model.js'
 import type { Board } from '../board.js'
 import type { Warning } from '../common.js'
-import { worldAABB, intersectVolume, type AABB } from './aabb.js'
+import { worldAABB, intersectVolume, isAxisAligned, type AABB } from './aabb.js'
 
 // Positive-overlap epsilon: flush contact (a shelf on a side, a butt joint — zero
 // penetration) must NOT flag; only a real intersection volume does (§2.4 #2, §6 step 4).
@@ -46,6 +46,15 @@ export function recomputeWarnings(model: Model | null): Warning[] {
     for (let k = i + 1; k < boards.length; k++) {
       if (!narrowphase(aabbs[i], aabbs[k]).intersects) continue
       if (governed(model, boards[i].id, boards[k].id)) continue
+      // AABB narrowphase is only exact for 90°-multiple rotations (§1d). For off-axis
+      // boards the AABB is conservative (over-reports), so skip UNRESOLVED_COLLISION to
+      // avoid false positives. A console note keeps the door open without asserting.
+      if (!isAxisAligned(boards[i]) || !isAxisAligned(boards[k])) {
+        console.warn(
+          `[geometry] ${boards[i].name} or ${boards[k].name} is off-axis — collision check is approximate; skipping UNRESOLVED_COLLISION`,
+        )
+        continue
+      }
       warnings.push({
         code: 'UNRESOLVED_COLLISION',
         boards: [boards[i].id, boards[k].id],

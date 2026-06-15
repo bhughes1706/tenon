@@ -7,7 +7,7 @@
 
 import type { Board } from '../board.js'
 import type { JointType } from '../joint.js'
-import { worldAABB, worldOBB, overlapRegion, extent, type AABB, type Vec3 } from './aabb.js'
+import { worldAABB, worldOBB, overlapRegion, extent, isAxisAligned, type AABB, type Vec3 } from './aabb.js'
 
 export interface PrecondResult {
   ok: boolean
@@ -30,25 +30,38 @@ const dominantAxis = (v: Vec3): 0 | 1 | 2 => {
 
 // Common gate: a and b must actually touch/overlap. Returns the overlap box, or a
 // teaching failure naming the gap. (overlapRegion is null only on a true axis gap.)
+// A gap ≤ CONTACT_TOL (1/64") is treated as touching — grid snapping can leave
+// sub-1/64" float gaps between faces that are nominally flush.
 function requireContact(a: Board, b: Board): { region: AABB } | { fail: PrecondResult } {
   const ba = worldAABB(a)
   const bb = worldAABB(b)
   const region = overlapRegion(ba, bb)
   if (region) return { region }
-  // Largest per-axis separation → the gap to report.
-  let gap = 0
-  let axis = 0
+  // Compute per-axis gap; find the widest separation for the error message, and
+  // determine whether every axis is within CONTACT_TOL (near-contact counts as touching).
+  let maxGap = 0
+  let reportAxis = 0
+  const rMin: Vec3 = [0, 0, 0]
+  const rMax: Vec3 = [0, 0, 0]
   for (let i = 0; i < 3; i++) {
-    const sep = Math.max(ba.min[i], bb.min[i]) - Math.min(ba.max[i], bb.max[i])
-    if (sep > gap) {
-      gap = sep
-      axis = i
+    const lo = Math.max(ba.min[i], bb.min[i])
+    const hi = Math.min(ba.max[i], bb.max[i])
+    rMin[i] = lo
+    rMax[i] = hi
+    const sep = lo - hi // positive when there is a gap on this axis
+    if (sep > maxGap) {
+      maxGap = sep
+      reportAxis = i
     }
+  }
+  if (maxGap <= CONTACT_TOL) {
+    // Near-contact: clamp to a zero-or-positive-extent degenerate region.
+    return { region: { min: rMin, max: [Math.max(rMin[0], rMax[0]), Math.max(rMin[1], rMax[1]), Math.max(rMin[2], rMax[2])] } }
   }
   return {
     fail: {
       ok: false,
-      reason: `${a.name} and ${b.name} do not touch — a gap of ${fmt(gap)} on the ${'XYZ'[axis]} axis. Move them into contact before adding this joint.`,
+      reason: `${a.name} and ${b.name} do not touch — a gap of ${fmt(maxGap)} on the ${'XYZ'[reportAxis]} axis. Move them into contact before adding this joint.`,
     },
   }
 }
@@ -59,6 +72,11 @@ export function checkJointPrecondition(
   b: Board,
   params: Record<string, unknown> = {},
 ): PrecondResult {
+  // AABB overlap is only exact for 90°-multiple rotations (§1d). For off-axis boards
+  // the measurements below are conservative and may under- or over-report engagement.
+  if (!isAxisAligned(a) || !isAxisAligned(b)) {
+    console.warn(`[geometry] ${a.name} or ${b.name} is off-axis — precondition check is approximate`)
+  }
   const gate = requireContact(a, b)
   if ('fail' in gate) return gate.fail
   const region = gate.region
@@ -73,7 +91,9 @@ export function checkJointPrecondition(
       return OK
 
     case 'half_lap': {
-      // Boards must cross: positive overlap in BOTH plan dimensions (§5.4).
+      // Necessary (not sufficient): boards must have positive overlap in at least 2
+      // dimensions. A face-stacked pair (overlap in l & w, thin in t) passes here —
+      // the carve recipe is what distinguishes a true crossing from a stack.
       const crossing = ext.filter((e) => e > CONTACT_TOL).length
       if (crossing < 2) {
         return {
