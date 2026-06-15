@@ -7,6 +7,7 @@ import {
 import type { Board } from '@tenon/core'
 import { useAppCtx } from '../lib/AppContext.js'
 import { useModelStore, type DesignerPanel } from '../lib/modelStore.js'
+import { liveMembers } from '../lib/groups.js'
 import { CommandPalette } from './CommandPalette.js'
 import { Viewport } from '../viewport/Viewport.js'
 import { Inspector } from './Inspector.js'
@@ -422,7 +423,7 @@ function Outliner() {
       )}
 
       {model.groups.map((g) => {
-        const members = g.members.map((id) => boardById.get(id)).filter((b): b is Board => !!b)
+        const members = liveMembers(model, g).map((id) => boardById.get(id)).filter((b): b is Board => !!b)
         const allSel = members.length > 0 && members.every((b) => selection.includes(b.id))
         const isCollapsed = collapsed.has(g.id)
         return (

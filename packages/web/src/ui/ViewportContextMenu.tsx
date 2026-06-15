@@ -29,13 +29,14 @@ const shortcutStyle: React.CSSProperties = {
 
 export function ViewportContextMenu({ ctx, children }: { ctx: AppCtx; children: React.ReactNode }) {
   const menuTarget = useModelStore((s) => s.menuTarget)
+  const setMenuTarget = useModelStore((s) => s.setMenuTarget)
   const items = menuTarget ? registry.forContext(menuTarget, ctx) : []
   const viewItems = items.filter((c) => c.group === 'View')
   const mainItems = items.filter((c) => c.group !== 'View')
   const run = (id: string) => registry.execute(id, ctx)
 
   return (
-    <ContextMenu.Root>
+    <ContextMenu.Root onOpenChange={(open) => { if (!open) setMenuTarget(null) }}>
       <ContextMenu.Trigger asChild>
         <div style={{ position: 'absolute', inset: 0 }}>{children}</div>
       </ContextMenu.Trigger>
