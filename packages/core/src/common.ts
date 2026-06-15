@@ -6,6 +6,9 @@ export const WarningCode = {
   PANEL_MOVEMENT: 'PANEL_MOVEMENT',
   MOVEMENT_MISMATCH: 'MOVEMENT_MISMATCH',
   WIDE_PANEL_NO_GLUEUP: 'WIDE_PANEL_NO_GLUEUP',
+  // chunk 9 — geometry evaluator
+  JOINT_PRECONDITION_FAILED: 'JOINT_PRECONDITION_FAILED', // existing joint no longer satisfies its "requires" row (§2.4 #3)
+  JOINT_FEATURE_UNIMPLEMENTED: 'JOINT_FEATURE_UNIMPLEMENTED', // param accepted but its geometry isn't carved yet (§5.6)
 } as const
 
 export type WarningCode = (typeof WarningCode)[keyof typeof WarningCode]

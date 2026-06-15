@@ -22,12 +22,14 @@ const BOARD_A = {
   transform: { pos: [0, 0, 0] as [number, number, number], rot: [0, 0, 0] as [number, number, number] },
 }
 
+// Positioned to genuinely overlap BOARD_A (x∈[11,15] ∩ [-15,15]) so the chunk-9
+// step-3 preconditions see real engagement — a housing/M&T between A and B is valid.
 const BOARD_B = {
   id: 'brd_BBBBBBBBBB',
   name: 'rail',
   dims: { l: 18, w: 2.5, t: 0.75 },
   species: 'spc_red_oak',
-  transform: { pos: [0, 15, 0] as [number, number, number], rot: [0, 0, 0] as [number, number, number] },
+  transform: { pos: [20, 0, 0] as [number, number, number], rot: [0, 0, 0] as [number, number, number] },
 }
 
 const EMPTY_MODEL: Model = {
@@ -492,6 +494,46 @@ describe('validateOps — update_joint param checking', () => {
     const result = validateOps(ops, MODEL_WITH_JOINT)
     expect(result.ok).toBe(false)
     expect(result.errors[0]).toMatch(/[Uu]nrecognized key/)
+  })
+})
+
+// ── validateOps — step 3: joint geometric preconditions (chunk 9) ─────────────
+
+describe('validateOps — joint preconditions (§4.2 step 3)', () => {
+  it('rejects an add_joint whose boards do not touch, with a teaching reason', () => {
+    const farBoards: Model = {
+      ...EMPTY_MODEL,
+      boards: [
+        BoardSchema.parse(BOARD_A),
+        BoardSchema.parse({ ...BOARD_B, transform: { pos: [60, 0, 0], rot: [0, 0, 0] } }),
+      ],
+    }
+    const ops = [
+      { op: 'add_joint', joint: { type: 'mortise_tenon', a: 'brd_AAAAAAAAAA', b: 'brd_BBBBBBBBBB', params: {} } },
+    ]
+    const result = validateOps(ops, farBoards)
+    expect(result.ok).toBe(false)
+    expect(result.errors[0]).toMatch(/^ops\[0\] \(add_joint\)/)
+    expect(result.errors[0]).toMatch(/do not touch/)
+    expect(result.errors[0]).toMatch(/rail/) // names a board — errors must teach
+  })
+
+  it('accepts an add_joint between genuinely overlapping boards', () => {
+    const ops = [
+      { op: 'add_joint', joint: { type: 'mortise_tenon', a: 'brd_AAAAAAAAAA', b: 'brd_BBBBBBBBBB', params: {} } },
+    ]
+    const result = validateOps(ops, MODEL_WITH_BOARDS)
+    expect(result.ok).toBe(true)
+    expect(result.warnings).toHaveLength(0)
+  })
+
+  it('warns (but does not reject) when a move invalidates an existing joint (§2.4 #3)', () => {
+    const ops = [{ op: 'transform_board', id: 'brd_BBBBBBBBBB', pos: [80, 0, 0] }]
+    const result = validateOps(ops, MODEL_WITH_JOINT)
+    expect(result.ok).toBe(true) // the move itself is legal
+    expect(result.warnings).toHaveLength(1)
+    expect(result.warnings[0].code).toBe('JOINT_PRECONDITION_FAILED')
+    expect(result.warnings[0].joints).toEqual(['jnt_AAAAAAAAAA'])
   })
 })
 

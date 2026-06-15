@@ -1,38 +1,30 @@
 import { describe, it, expect } from 'vitest'
-import type { Board, Joint, Model } from '@tenon/core'
-import { recomputeWarnings, worldAABB, penetrates } from './collision.js'
-import type { AABB } from '../viewport/snapping.js'
+import type { Board, Joint, Model } from '../../index.js'
+import { recomputeWarnings, narrowphase, COLLISION_VOL_EPS } from '../collision.js'
+import type { AABB } from '../aabb.js'
 
-// recomputeWarnings only reads board id/name/dims/transform and joints — a loose
-// cast keeps fixtures readable.
+// recomputeWarnings reads only board id/name/dims/transform + joints — loose casts
+// keep the fixtures readable. Ported from chunk 8's web/src/lib/collision.test.ts,
+// now on the volume epsilon (§6 step 4).
 const board = (id: string, pos: [number, number, number], dims = { l: 4, w: 4, t: 4 }): Board =>
   ({ id, name: id, dims, transform: { pos, rot: [0, 0, 0] } }) as unknown as Board
 
-const model = (boards: Board[], joints: Joint[] = []): Model =>
-  ({ boards, joints } as unknown as Model)
+const model = (boards: Board[], joints: Joint[] = []): Model => ({ boards, joints } as unknown as Model)
 
-describe('worldAABB', () => {
-  it('is exact for a 90°-rotated board (length axis swaps)', () => {
-    const b = { id: 'brd_x', name: 'r', dims: { l: 10, w: 2, t: 1 }, transform: { pos: [0, 0, 0], rot: [0, 90, 0] } } as unknown as Board
-    const box = worldAABB(b)
-    // rot Y 90° swaps length(x) and thickness(z): x half → 0.5, z half → 5
-    expect(box.max[0]).toBeCloseTo(0.5, 4)
-    expect(box.max[2]).toBeCloseTo(5, 4)
-    expect(box.max[1]).toBeCloseTo(1, 4)
-  })
-})
-
-describe('penetrates', () => {
-  it('flush contact does not count (zero overlap on one axis)', () => {
+describe('narrowphase', () => {
+  it('flush contact does not count as a collision', () => {
     const a: AABB = { min: [0, 0, 0], max: [2, 2, 2] }
-    const b: AABB = { min: [2, 0, 0], max: [4, 2, 2] } // touching at x=2
-    expect(penetrates(a, b)).toBe(false)
+    const b: AABB = { min: [2, 0, 0], max: [4, 2, 2] } // touching at x=2 → 0 volume
+    expect(narrowphase(a, b).intersects).toBe(false)
+    expect(narrowphase(a, b).volume).toBe(0)
   })
 
   it('real interpenetration counts', () => {
     const a: AABB = { min: [0, 0, 0], max: [2, 2, 2] }
     const b: AABB = { min: [1, 1, 1], max: [3, 3, 3] }
-    expect(penetrates(a, b)).toBe(true)
+    const r = narrowphase(a, b)
+    expect(r.intersects).toBe(true)
+    expect(r.volume).toBeGreaterThan(COLLISION_VOL_EPS)
   })
 })
 
@@ -45,7 +37,6 @@ describe('recomputeWarnings', () => {
   })
 
   it('does not flag boards that merely touch flush', () => {
-    // 4" cubes centered 4" apart → faces meet exactly, zero penetration.
     const w = recomputeWarnings(model([board('brd_a', [0, 0, 0]), board('brd_b', [4, 0, 0])]))
     expect(w).toHaveLength(0)
   })

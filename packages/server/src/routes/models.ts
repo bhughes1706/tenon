@@ -1,8 +1,8 @@
 import { Router } from 'express'
 import { getDb } from '../db.js'
 import { emitSse } from '../sse.js'
-import { makeModelId, ModelSchema, validateOps, ApplyOpsRequestSchema } from '@tenon/core'
-import type { Model, OpResult } from '@tenon/core'
+import { makeModelId, ModelSchema, validateOps, recomputeWarnings, ApplyOpsRequestSchema } from '@tenon/core'
+import type { Model, OpResult, Warning } from '@tenon/core'
 import { applyOps } from '../lib/applyOps.js'
 
 const router: Router = Router()
@@ -149,8 +149,13 @@ router.post('/:id/ops', (req, res) => {
     return res.status(409).json(result)
   }
 
+  // Step 4 (§6): the analytic collision pass over the committed model is the
+  // AUTHORITY for UNRESOLVED_COLLISION (no Manifold in Node — warnings, not meshes).
+  // Joined with the step-3 precondition re-derivation warnings from validateOps.
+  const warnings: Warning[] = [...validation.warnings, ...recomputeWarnings(updated)]
+
   emitSse('model_changed', { id: req.params.id, rev: newRev })
-  res.json({ ok: true, rev: newRev, applied, warnings: validation.warnings, errors: [] } satisfies OpResult)
+  res.json({ ok: true, rev: newRev, applied, warnings, errors: [] } satisfies OpResult)
 })
 
 // GET /api/models/:id/cutlist — stub until chunk 15

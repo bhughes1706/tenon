@@ -3,7 +3,10 @@ import type { Model, Op, OpResult, Warning, Board } from '@tenon/core'
 import { makeBoardId, makeGroupId } from '@tenon/core'
 import { fetchModel, applyModelOps } from './modelApi.js'
 import { applyOpsLocal, invertOps } from './clientOps.js'
-import { recomputeWarnings } from './collision.js'
+// Collision lint is now core (chunk 9): the same analytic pass runs here for instant
+// optimistic feedback and on the server, which returns the authoritative warnings in
+// OpResult.warnings — adopted on the ok branch below (no flicker, identical code).
+import { recomputeWarnings } from '@tenon/core'
 import type { ViewportScene } from './syncViewportTheme.js'
 import type { CommandContext } from './registry.js'
 
@@ -82,9 +85,8 @@ export const useModelStore = create<ModelState>((set, get) => {
     if (!modelId || !model) return false
     const before = model
     const optimistic = applyOpsLocal(before, ops)
-    // Lint is recomputed client-side on every model mutation so collisions show
-    // instantly, no server round-trip (§6 step 4). Chunk 9 moves authority to the
-    // server's Manifold narrowphase via OpResult.warnings; until then we ignore it.
+    // Instant optimistic lint via the core analytic pass — no server round-trip
+    // (§6 step 4). Replaced by the server's authoritative result.warnings on ok.
     set({ model: optimistic, warnings: recomputeWarnings(optimistic), saving: true, error: null })
 
     let result: OpResult
@@ -111,8 +113,11 @@ export const useModelStore = create<ModelState>((set, get) => {
         const fresh = await fetchModel(modelId).catch(() => optimistic)
         set({ model: fresh, warnings: recomputeWarnings(fresh), saving: false })
       } else {
+        // Adopt the server's authoritative warnings (collision narrowphase +
+        // precondition re-derivation, §6). Same core code → no flicker vs. the
+        // optimistic pass above.
         const synced = { ...optimistic, rev: result.rev }
-        set({ model: synced, warnings: recomputeWarnings(synced), saving: false })
+        set({ model: synced, warnings: result.warnings, saving: false })
       }
       return true
     }
@@ -238,6 +243,7 @@ export const useModelStore = create<ModelState>((set, get) => {
           ...JSON.parse(JSON.stringify(src)),
           id: newId,
           name: `${src.name} copy`,
+          locked: false,
           transform: {
             pos: [
               src.transform.pos[0] + OFFSET[0],

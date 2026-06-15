@@ -1,10 +1,12 @@
 import { z } from 'zod'
 import type { Model } from './model.js'
+import type { Board } from './board.js'
 import { OpSchema } from './ops.js'
 import type { Op } from './ops.js'
 import { JOINT_PARAM_SCHEMAS } from './joint.js'
 import type { JointType } from './joint.js'
 import type { Warning } from './common.js'
+import { checkJointPrecondition } from './geometry/preconditions.js'
 
 export type ValidationResult = {
   ok: boolean
@@ -67,8 +69,103 @@ export function validateOps(ops: unknown[], model: Model): ValidationResult {
     }
   }
 
-  // Steps 3–4 (joint geometric preconditions, evaluation) land with the evaluator (chunk 9).
-  return { ok: true, errors: [], warnings: [], ops: parsed }
+  // Step 3 — joint geometric preconditions (§4.2 step 3, §5 "Requires"). Hard-fails
+  // an add_joint whose overlap can't support the type; soft-warns when a board move
+  // invalidates an existing joint (§2.4 #3). Analytic core — no Manifold needed.
+  // (Step 4, the Manifold display carve, runs in the web worker, not here — the
+  // server returns warnings, not meshes; see docs/chunk9-design.md §"Why the worker".)
+  const step3 = checkPreconditions(parsed, model)
+  if (step3.errors.length > 0) return { ok: false, errors: step3.errors, warnings: [], ops: [] }
+
+  return { ok: true, errors: [], warnings: step3.warnings, ops: parsed }
+}
+
+// Step 3 helper. Rebuilds post-batch board geometry (dims + transform only — that's
+// all preconditions read) and the joint set, then runs the per-type precondition.
+function checkPreconditions(parsed: Op[], model: Model): { errors: string[]; warnings: Warning[] } {
+  const boards = new Map<string, Board>(model.boards.map((b) => [b.id, b]))
+  const joints = new Map<string, SimJoint>(model.joints.map((j) => [j.id, { type: j.type, a: j.a, b: j.b }]))
+  const originalJointIds = new Set(model.joints.map((j) => j.id))
+  const movedBoards = new Set<string>() // boards whose geometry changed in this batch
+  const addJointChecks: { index: number; type: JointType; a: string; b: string; params: Record<string, unknown> }[] = []
+  const updatedJointIds: string[] = []
+
+  parsed.forEach((op, index) => {
+    switch (op.op) {
+      case 'add_board':
+        if (op.board.id) boards.set(op.board.id, op.board as Board)
+        break
+      case 'update_board': {
+        const cur = boards.get(op.id)
+        if (cur) {
+          boards.set(op.id, { ...cur, ...op.patch } as Board)
+          if (op.patch.dims || op.patch.transform) movedBoards.add(op.id)
+        }
+        break
+      }
+      case 'transform_board': {
+        const cur = boards.get(op.id)
+        if (cur) {
+          boards.set(op.id, {
+            ...cur,
+            transform: { pos: op.pos ?? cur.transform.pos, rot: op.rot ?? cur.transform.rot },
+          })
+          movedBoards.add(op.id)
+        }
+        break
+      }
+      case 'remove_board': {
+        boards.delete(op.id)
+        for (const [jid, j] of joints) if (j.a === op.id || j.b === op.id) joints.delete(jid)
+        break
+      }
+      case 'add_joint': {
+        const { id, type, a, b, params } = op.joint
+        addJointChecks.push({ index, type, a, b, params: (params ?? {}) as Record<string, unknown> })
+        if (id) joints.set(id, { type, a, b })
+        break
+      }
+      case 'update_joint':
+        updatedJointIds.push(op.id)
+        break
+      default:
+        break
+    }
+  })
+
+  // Hard preconditions on newly added joints, evaluated against final batch geometry.
+  const errors: string[] = []
+  for (const c of addJointChecks) {
+    const a = boards.get(c.a)
+    const b = boards.get(c.b)
+    if (!a || !b) continue // unreachable after step 2, but stay defensive
+    const res = checkJointPrecondition(c.type, a, b, c.params)
+    if (!res.ok) errors.push(`ops[${c.index}] (add_joint): ${res.reason}`)
+  }
+  if (errors.length > 0) return { errors, warnings: [] }
+
+  // Soft re-derivation: an EXISTING joint whose board moved/resized, or one touched by
+  // update_joint, may no longer satisfy its requires-row → warn, don't reject (§2.4 #3).
+  const toReDerive = new Map<string, SimJoint>()
+  for (const [jid, j] of joints) {
+    if (originalJointIds.has(jid) && (movedBoards.has(j.a) || movedBoards.has(j.b))) toReDerive.set(jid, j)
+  }
+  for (const id of updatedJointIds) {
+    const j = joints.get(id)
+    if (j && originalJointIds.has(id)) toReDerive.set(id, j)
+  }
+
+  const warnings: Warning[] = []
+  for (const [jid, j] of toReDerive) {
+    const a = boards.get(j.a)
+    const b = boards.get(j.b)
+    if (!a || !b) continue
+    const res = checkJointPrecondition(j.type, a, b)
+    if (!res.ok) {
+      warnings.push({ code: 'JOINT_PRECONDITION_FAILED', joints: [jid], boards: [j.a, j.b], msg: res.reason! })
+    }
+  }
+  return { errors, warnings }
 }
 
 function formatIssue(issue: z.ZodIssue): string {
