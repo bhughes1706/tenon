@@ -1,0 +1,235 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`joint golden carves (kernel-drift canary) > bridle 1`] = `
+[
+  {
+    "bbox": {
+      "max": [
+        3,
+        1,
+        0.5,
+      ],
+      "min": [
+        -3,
+        -1,
+        -0.5,
+      ],
+    },
+    "id": "brd_a",
+    "tris": 28,
+    "volume": 11.625,
+  },
+  {
+    "bbox": {
+      "max": [
+        3,
+        1,
+        0.5,
+      ],
+      "min": [
+        -3,
+        -1,
+        -0.5,
+      ],
+    },
+    "id": "brd_b",
+    "tris": 28,
+    "volume": 11.375,
+  },
+]
+`;
+
+exports[`joint golden carves (kernel-drift canary) > butt 1`] = `
+[
+  {
+    "bbox": {
+      "max": [
+        3,
+        1,
+        0.375,
+      ],
+      "min": [
+        -3,
+        -1,
+        -0.375,
+      ],
+    },
+    "id": "brd_a",
+    "tris": 12,
+    "volume": 9,
+  },
+  {
+    "bbox": {
+      "max": [
+        3,
+        1,
+        0.375,
+      ],
+      "min": [
+        -3,
+        -1,
+        -0.375,
+      ],
+    },
+    "id": "brd_b",
+    "tris": 12,
+    "volume": 9,
+  },
+]
+`;
+
+exports[`joint golden carves (kernel-drift canary) > half_lap 1`] = `
+[
+  {
+    "bbox": {
+      "max": [
+        6,
+        1,
+        0.375,
+      ],
+      "min": [
+        -6,
+        -1,
+        -0.375,
+      ],
+    },
+    "id": "brd_a",
+    "tris": 28,
+    "volume": 16.5,
+  },
+  {
+    "bbox": {
+      "max": [
+        6,
+        1,
+        0.375,
+      ],
+      "min": [
+        -6,
+        -1,
+        -0.375,
+      ],
+    },
+    "id": "brd_b",
+    "tris": 28,
+    "volume": 16.5,
+  },
+]
+`;
+
+exports[`joint golden carves (kernel-drift canary) > housing 1`] = `
+[
+  {
+    "bbox": {
+      "max": [
+        12,
+        6,
+        0.375,
+      ],
+      "min": [
+        -12,
+        -6,
+        -0.375,
+      ],
+    },
+    "id": "brd_a",
+    "tris": 28,
+    "volume": 213.75,
+  },
+  {
+    "bbox": {
+      "max": [
+        5,
+        6,
+        0.375,
+      ],
+      "min": [
+        -5,
+        -6,
+        -0.375,
+      ],
+    },
+    "id": "brd_b",
+    "tris": 12,
+    "volume": 90,
+  },
+]
+`;
+
+exports[`joint golden carves (kernel-drift canary) > mortise_tenon 1`] = `
+[
+  {
+    "bbox": {
+      "max": [
+        2,
+        2,
+        0.75,
+      ],
+      "min": [
+        -2,
+        -2,
+        -0.75,
+      ],
+    },
+    "id": "brd_a",
+    "tris": 32,
+    "volume": 22.3125,
+  },
+  {
+    "bbox": {
+      "max": [
+        2,
+        1.5,
+        0.75,
+      ],
+      "min": [
+        -2,
+        -1.5,
+        -0.75,
+      ],
+    },
+    "id": "brd_b",
+    "tris": 36,
+    "volume": 12.9375,
+  },
+]
+`;
+
+exports[`joint golden carves (kernel-drift canary) > rabbet 1`] = `
+[
+  {
+    "bbox": {
+      "max": [
+        12,
+        3,
+        0.375,
+      ],
+      "min": [
+        -12,
+        -3,
+        -0.375,
+      ],
+    },
+    "id": "brd_a",
+    "tris": 20,
+    "volume": 103.5,
+  },
+  {
+    "bbox": {
+      "max": [
+        12,
+        1.5,
+        0.25,
+      ],
+      "min": [
+        -12,
+        -1.5,
+        -0.25,
+      ],
+    },
+    "id": "brd_b",
+    "tris": 12,
+    "volume": 36,
+  },
+]
+`;

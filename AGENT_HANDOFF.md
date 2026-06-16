@@ -1,6 +1,6 @@
 # Tenon — Agent Handoff Document
 
-**Date:** 2026-06-14 (chunk 9 IN PROGRESS — Stages 2 & 3 done; Stage 4 = JointFns is next; see below)  
+**Date:** 2026-06-15 (chunk 9 IN PROGRESS — Stages 2, 3 & 4 done; Stage 5 = provenance/memo/perf+docs is next; see below)  
 **Repo:** https://github.com/bhughes1706/tenon  
 **Spec:** `/Users/Brian/Downloads/tenon-spec-v0.4.md` (always load this — it is the ground truth)
 
@@ -15,23 +15,24 @@ Chunk 9 (geometry evaluator) is being built in the 5 stages of `docs/chunk9-desi
 |---|---|---|
 | 1. Spike | manifold-3d boots + carves in worker/vitest | ✅ **committed** (`12e21ee`) |
 | 2. Analytic core | `geometry/{aabb,preconditions,collision}` + tests, validateOps step 3, server + store warning authority | ✅ **committed** (`236ae41`) |
-| 3. Eval skeleton | solids/evaluate/mesh (base + grooves), worker RPC, store meshes, viewport swap, delete spike scaffolding | ✅ **DONE, green, UNCOMMITTED** |
-| 4. Six JointFns | housing→rabbet→half_lap→butt→bridle→mortise_tenon + golden/property tests | ⬜ **NEXT** — not started |
-| 5. Provenance/memo/perf | + docs + handoff | ⬜ not started |
+| 3. Eval skeleton | solids/evaluate/mesh (base + grooves), worker RPC, store meshes, viewport swap, delete spike scaffolding | ✅ **committed** (`0f0e66b`) |
+| 4. Six JointFns | housing→rabbet→half_lap→butt→bridle→mortise_tenon + golden/property tests | ✅ **DONE, green, UNCOMMITTED** |
+| 5. Provenance/memo/perf | + docs + handoff | ⬜ **NEXT** — provenance wired; memo/perf measurement + headless render check remain |
 
-**Stages 1–2 are committed** (`12e21ee`, `236ae41`). Stage 3 + peer-review follow-ups are in the working tree. (There are also unrelated pre-existing uncommitted chunk-8 follow-ups: `lib/groups.ts`, `lib/registry.test.ts`, the `liveMembers` wiring in `DesignerShell.tsx`, `ViewportContextMenu.tsx` — leave them.)
+**Stages 1–3 are committed** (`12e21ee`, `236ae41`, `0f0e66b`). **Stage 4 is in the working tree, green, uncommitted.** Stage-4 design notes + deviations are in `docs/chunk9-design.md` "Stage 4 results" (read it).
 
 ### Verify current state
 ```bash
 corepack pnpm --filter @tenon/core build      # build first — web/server depend on dist
-corepack pnpm --filter @tenon/core typecheck && corepack pnpm --filter @tenon/core test     # 77 pass
+corepack pnpm --filter @tenon/core typecheck && corepack pnpm --filter @tenon/core test     # 107 pass
 corepack pnpm --filter @tenon/web typecheck   && corepack pnpm --filter @tenon/web test      # 65 pass
 corepack pnpm --filter @tenon/server typecheck && corepack pnpm --filter @tenon/server test  # 16 pass
-corepack pnpm --filter @tenon/web build        # prod build: emits geometry.worker + manifold.wasm assets; main bundle stays ~401 KB (no THREE/WASM)
+corepack pnpm --filter @tenon/server build && grep -ci manifold packages/server/dist/index.js  # → 0 (§6 invariant)
+corepack pnpm --filter @tenon/web build        # prod build: emits geometry.worker + manifold.wasm assets; main bundle stays 402 KB (no THREE/WASM)
 ```
-Counts: core **77** (Stage 3 dropped the 4 spike tests, added 3 `eval/evaluate` tests: 78−4+3); web **65** (unchanged); server **16**. **Server bundle has 0 manifold refs** (`grep -rci manifold packages/server/dist/index.js` → 0) — design §6 invariant holds.
+Counts: core **107** (Stage 4 added 24 property + 6 golden joint tests: 77+30); web **65** (unchanged); server **16**. **Server bundle has 0 manifold refs**; web **main `index` bundle has 0 manifold / 0 `BufferGeometry`** (THREE is code-split into `three.core` + `geometry.worker` + the `manifold.wasm` asset) — design §6 invariant holds.
 
-> ⚠️ **NOT headless-verified this session.** Typecheck + unit tests + the vite prod build are green, but the carved-mesh viewport render was not screenshotted (the puppeteer-swiftshader recipe in handoff §"Local Verification" wasn't run). First Stage-4 task or a manual check: load a model, confirm boards render from the worker (carved `<bufferGeometry>`) with correct selection/hover outlines, and a board with an `edge_groove` shows the slot.
+> ⚠️ **Carved-joint render NOT headless-verified this session.** Core unit/golden tests rigorously verify the geometry (exact removed volumes, half-lap complement, idempotence, manifold validity, M&T warnings) and the web prod build is green, but the worker→store→`BoardMesh` carved render with a real joint was not screenshotted (puppeteer-swiftshader recipe in §"Local Verification"). Good first Stage-5 / manual check: load a 2-board model, add a `half_lap` (boards render with complementary laps) and a `mortise_tenon` (mortise + shouldered tenon), confirm selection/hover outlines derive from the carved geom.
 
 ### Stage 2 — DONE (files in working tree)
 **New (core):** `src/geometry/aabb.ts` (worldAABB, worldOBB, overlapRegion, intersectVolume, isAxisAligned, eulerXYZToMat3/applyMat3/transpose, **worldBoxToLocal**, extent/center, types Vec3/AABB/OBB) · `src/geometry/collision.ts` (recomputeWarnings, narrowphase seam, COLLISION_VOL_EPS=1e-6) · `src/geometry/preconditions.ts` (checkJointPrecondition, CONTACT_TOL=1/64, MT_MIN_ENGAGEMENT=0.5) · `src/geometry/index.ts` · `src/geometry/__tests__/{aabb,collision,preconditions}.test.ts`.
@@ -56,10 +57,20 @@ The full base+groove carve pipeline runs end-to-end: worker → store → viewpo
 5. **Carved meshes are board-LOCAL** (centred at origin, same as the box). The R3F `<group>` keeps `board.transform`; the gizmo still moves the *board*. Stage-4 JointFns must emit `CutterBox` in the **target board's local frame** (use `worldBoxToLocal` from `core/geometry`).
 6. **Worker warnings are `[]` for now.** `evaluate` returns `{boards, warnings}` but Stage 3 emits no joint warnings; the store **ignores** worker warnings (collision/preconditions stay analytic + server-authoritative). Stage 4 wires THIN_TENON/THIN_MORTISE_WALL/NEAR_THROUGH/JOINT_FEATURE_UNIMPLEMENTED through `evaluate`'s `warnings` and decides how the store merges them.
 
-### Stage 4 entry points (where joints plug in)
-- **JointFn contract is already typed** in `eval/types.ts`: `JointFn = (a, b, params, ctx) → CutterSet { a: CutterBox[], b: CutterBox[], warnings }` — pure box math, **no WASM** (so JointFns are unit-testable and *could* run server-side for warnings later). `BoardSolid` carries `aabb`+`obb`.
-- **`evaluate.ts` `evaluateBoard`** currently seeds `cutterBoxes = edgeGrooveCutters(board)`. Stage 4: for each enabled joint touching this board, call the type's `JointFn`, push its `cuttersA`/`cuttersB` (whichever targets this board) into `cutterBoxes`, and merge `warnings`. The `Map<originalID→feature>` + batched subtract already handle provenance/perf — **no pipeline change needed**, only feeding more `CutterBox`es with the right `feature`/`jointId`.
-- **Build order** (§14): `housing → rabbet → half_lap → butt → bridle → mortise_tenon`, each with golden + property tests as it lands (§6.1: containment, volume ±0.001, complement, idempotence, manifold-validity). Use `CutFeatureKind` values already in `types.ts` (`mortise`/`tenon_cheek`/`shoulder`/`rabbet`/`dado`/`lap`/`slot`/`cheek`/`haunch`).
+### Stage 4 — DONE (files in working tree)
+All six first-wave JointFns implemented + the §6.1 golden/property suite. **Full details + the locked Stage-4 decisions/deviations are in `docs/chunk9-design.md` "Stage 4 results — 2026-06-15"** — read that before extending the joints.
+
+**New (core):** `src/eval/joints/{util,butt,rabbet,housing,halfLap,bridle,mortiseTenon,index}.ts` — one `JointFn` each (pure box math, no WASM) + the `JOINT_FNS` registry · `src/eval/__tests__/{fixtures,joints.property,joints.golden}.ts` + committed golden snapshot (`__snapshots__/joints.golden.test.ts.snap`).
+**Modified (core):** `evaluate.ts` — builds `BoardSolid`s (worldAABB/worldOBB), runs each enabled joint's `JointFn`, accumulates per-board `CutterBox`es, stamps `jointId`, merges warnings; precondition re-check skips+warns invalid joints; unknown joint type → `JOINT_FEATURE_UNIMPLEMENTED` · `solids.ts` — added **`overcutToBoard()`** (central overcut, see below) and `edgeGrooveCutters` is now **exact** · `eval/index.ts` exports `JOINT_FNS`.
+**Modified (web):** `lib/modelStore.ts` — added **`jointWarnings`** (joint *geometry* lint from the worker; analytic codes filtered to avoid dup with the server's `warnings`), set in `evaluateGeometry` · `ui/DesignerShell.tsx` — `LintList`/`lintCount` render the union of `warnings` + `jointWarnings` · `lib/geometryClient.ts` — carved geometry now carries `provenance`+`features` on `geometry.userData` (chunk-11 contract).
+
+**Two big Stage-4 things the next agent MUST know** (rest in the design doc):
+1. **Overcut is centralised now** — `overcutToBoard()` in `solids.ts` opens only the cutter faces flush-with/beyond a board face (interior pocket walls stay exact), applied in `evaluate.ts` before `buildCutter`. **JointFns + `edgeGrooveCutters` emit EXACT boxes** — do NOT re-add per-cutter `OVERCUT` (it silently removed extra material and broke the half-lap complement; that's why it moved).
+2. **Square haunch + housing `shoulder` + M&T wedged/drawbore/twin/sloped are DEFERRED** (warn `JOINT_FEATURE_UNIMPLEMENTED`, param round-trips). Square haunch was scoped *in* by the design — re-scope to chunk 11 / a follow-up (see design doc decision 2).
+
+### Stage 4 entry points (historical — these are now implemented)
+- **JointFn contract** in `eval/types.ts`: `JointFn = (a, b, params, ctx) → CutterSet { a: CutterBox[], b: CutterBox[], warnings }` — pure box math, **no WASM**. `BoardSolid` carries `aabb`+`obb`.
+- **Build order** (§14, all landed): `housing → rabbet → half_lap → butt → bridle → mortise_tenon`. `CutFeatureKind` values used: `dado`/`rabbet`/`lap`/`slot`/`cheek`/`mortise`/`tenon_cheek`/`shoulder` (haunch unused — deferred).
 
 ### Locked design decisions the next agent MUST follow (consistency)
 1. **Local-space carve** (design §5, gotcha #5): carve each board in its OWN local frame (box at origin, dims along x/y/z); R3F keeps `board.transform` position/rotation. Collision/preconditions use **world** AABBs from `core/geometry`. Don't mix frames.

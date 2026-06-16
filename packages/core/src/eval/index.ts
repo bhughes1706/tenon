@@ -7,6 +7,7 @@ export { getManifold } from './manifold.js'
 export { evaluate } from './evaluate.js'
 export { baseSolid, buildCutter, edgeGrooveCutters, OVERCUT } from './solids.js'
 export { toEvalMesh } from './mesh.js'
+export { JOINT_FNS } from './joints/index.js'
 export type {
   EvalMesh,
   EvalResult,

@@ -280,3 +280,36 @@ The kernel-gating spike (gotchas #1/#2) is done. manifold-3d boots and carves a 
 - `packages/core/src/eval/spike.ts` + `__tests__/spike.test.ts` (replaced by the §6.1 golden/property suite).
 - `packages/web/spike.html`, `packages/web/src/spike-main.ts`, and the `'spike'` branch + `build.rollupOptions.input` spike entry in `vite.config.ts`.
 - `packages/web/src/workers/geometry.worker.ts` currently carries only the spike RPC — replace its body with the real `evaluate(model)` RPC (keep the file + the `@tenon/core/eval` import).
+
+---
+
+## Stage 4 results — 2026-06-15 (§11 step 4: six JointFns + §6.1 suite GREEN)
+
+All six first-wave JointFns are implemented and tested. Core: **107 tests** (was 77; +24 property, +6 golden). Web 65, server 16 unchanged. Server bundle still **0 manifold refs**; web main bundle still 402 KB (THREE/WASM code-split into `three.core` + `geometry.worker` + `manifold.wasm`).
+
+**Files (core):** `src/eval/joints/{util,butt,rabbet,housing,halfLap,bridle,mortiseTenon,index}.ts` (one `JointFn` each + the `JOINT_FNS` registry) · `evaluate.ts` rewritten to build `BoardSolid`s, run each enabled joint's `JointFn`, accumulate per-board `CutterBox`es, stamp `jointId`, and merge warnings · `solids.ts` gained `overcutToBoard()` (see below) and `edgeGrooveCutters` is now exact · `eval/index.ts` exports `JOINT_FNS` · tests `__tests__/{fixtures,joints.property,joints.golden}.ts` + committed golden snapshot.
+**Files (web):** `modelStore.ts` gained `jointWarnings` (joint geometry lint; analytic codes filtered) set by `evaluateGeometry` · `DesignerShell.tsx` `LintList`/`lintCount` merge `warnings` + `jointWarnings`.
+
+### Cutter recipes (all axis-aligned prisms, target board's local frame)
+| Joint | Cut | Removed-volume identity (used by the property test) |
+|---|---|---|
+| `butt` | nothing (fastener ghosts are render-only, chunk 11) | 0 |
+| `housing` | dado in `a`: `depth` (def t_a/3) into the contacted face, b-thickness wide, full run (stopped → one wall kept) | `depth · b_thk · run` |
+| `rabbet` | L-notch on `a`'s edge: `depth` (def t_a/2) × `width` (def t_b) × full edge | `depth · width · edge` |
+| `half_lap` | split the overlap along its thinnest axis; `a` loses `split·H`, `b` the rest | `removed_a + removed_b = overlap` (complement) |
+| `bridle` | `a` = centre slot (tenon band), `b` = two cheeks; tenon = `tenon_fraction·t` snap 1/8 | slot `tenonThk·eng·w` ; cheeks `(t−tenonThk)·eng·w` |
+| `mortise_tenon` | `a` = pocket (tenonThk × tenonW × depth/through), `b` = cheeks + width shoulders | mortise `tenonThk·tenonW·depth` ; tenon `eng·(t_b·w_b − tenonThk·tenonW)` |
+
+### Decisions / deviations made in Stage 4 (locked)
+1. **Overcut is centralised, not per-JointFn.** JointFns (and `edgeGrooveCutters`) now emit the **exact** cut geometry; `solids.ts overcutToBoard()` opens (by `OVERCUT`) only cutter faces that are flush-with-or-beyond a board face, leaving interior pocket walls exact, just before `buildCutter` in `evaluate.ts`. This **fixes a bug class**: a manual overcut that happened to land *inside* the board (the lap pocket's in-plane faces, an M&T cheek when the tenon protrudes) silently removed extra material and broke the half-lap complement / M&T volume. With central overcut the removed volumes are exact and coplanar break-through still happens. *(Supersedes the §2b/§3 "JointFns overcut their open faces" sketch.)*
+2. **Square haunch is DEFERRED** (warns `JOINT_FEATURE_UNIMPLEMENTED`), along with `sloped`/`wedged`/`drawbore`/`twin` and housing `shoulder`. The design scoped a square haunch *in*; we defer it because a haunch only matters when filling a stile's `edge_groove` (a narrow case, not in the acceptance criteria) and a wrong haunch carve is worse than a clear "not yet" (§11.4). The param still round-trips. **Re-scope target: chunk 11** (joint dialog) or a Stage-5 follow-up.
+3. **M&T blind cap → physical, not t_a−1/4.** A hard cap at `t_a − 1/4` made `NEAR_THROUGH` (warn when wall < 1/8) unreachable. Blind `depth` is now capped at `t_a − CONTACT_TOL` (stays blind) and a thin remaining wall **warns** via `NEAR_THROUGH` — the t_a−1/4 guidance became a warning, not a silent clamp, so an intentional deep blind is honoured.
+4. **half_lap split axis = the overlap's thinnest axis** (rotation-independent), `on_top` = the board whose centre is higher along that axis (param override wins). Generalises the design's "world-Y of overlap" so it holds for any 90° orientation.
+5. **Precondition re-check inside `evaluate`** (§2d step 2): an enabled joint whose boards no longer satisfy its "requires" row is **skipped + warned** (`JOINT_PRECONDITION_FAILED`) rather than carved into broken geometry. A type with no `JointFn` (box_joint/dovetail/miter) warns `JOINT_FEATURE_UNIMPLEMENTED` and carves uncut.
+6. **Two warning authorities, no duplication.** `UNRESOLVED_COLLISION` + `JOINT_PRECONDITION_FAILED` stay **analytic + server-authoritative** (`OpResult.warnings` → store `warnings`). The worker is the **sole** source of joint *geometry* lint (`THIN_TENON`/`THIN_MORTISE_WALL`/`NEAR_THROUGH`/`JOINT_FEATURE_UNIMPLEMENTED`) → store `jointWarnings`; the store filters the analytic codes out of the worker result so each warning shows once. `LintList` renders the union.
+
+### Not done (Stage 5 / later)
+- **Per-board memo + perf measurement** (§8) — full re-eval ships; measure against the 250 ms target before adding dirty-board incremental.
+- **Provenance is wired** (per-triangle `Uint16Array` + `CutFeature[]` with `jointId`, carried on the carved geometry's `userData` via `geometryClient`) but the **face-pick UI stays chunk 11**.
+- **Square haunch / deferred M&T sub-features / housing shoulder** carves (see decision 2).
+- **Headless viewport screenshot of a carved joint not yet captured this session** — unit + golden tests verify the geometry; the carved-mesh render path (worker → store → `BoardMesh`) typechecks and prod-builds but wasn't screenshotted.

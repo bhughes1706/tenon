@@ -6,20 +6,43 @@
 // Everything is built in the board's LOCAL frame (box centred at origin, dims along
 // x=l, y=w, z=t). The viewport keeps board.transform on the R3F <group>, so the carve
 // never touches world space — the chunk 7/8 gizmo/snapping path is untouched (§5, gotcha #5).
+//
+// CUTTER OVERCUT (gotcha #4) is applied centrally by overcutToBoard(), not by the
+// JointFns: a cutter face that is flush with (or past) a board face is pushed out by
+// OVERCUT so the boolean breaks through cleanly instead of leaving a zero-thickness
+// skin; an interior face (a pocket wall) is left exact. JointFns therefore emit the TRUE
+// cut geometry and never reason about overcut — which also keeps removed volumes exact
+// (an overcut that landed inside the board would silently remove extra material).
 import type { Manifold, ManifoldToplevel } from 'manifold-3d'
 import type { Board } from '../board.js'
+import type { Vec3 } from '../geometry/aabb.js'
 import type { CutterBox } from './types.js'
 
 type ManifoldStatic = ManifoldToplevel['Manifold']
 
-// Overcut applied to a cutter's OPEN faces so a coplanar cut doesn't leave a
-// zero-thickness skin or a non-manifold sliver (gotcha #4). Never applied to a
-// stopped end — a stopped groove must keep its wall.
+// Distance a cutter's OPEN (flush-or-beyond) faces are pushed past the board face.
 export const OVERCUT = 0.01
+
+// A cutter bound within this of a board face counts as flush (float-noise tolerant).
+const FLUSH_EPS = 1e-6
 
 // Centred base box for a board, in its LOCAL frame.
 export function baseSolid(M: ManifoldStatic, board: Board): Manifold {
   return M.cube([board.dims.l, board.dims.w, board.dims.t], true)
+}
+
+// Push any cutter face flush with (or outside) a board face out by OVERCUT so the cut
+// breaks through cleanly; leave interior faces exact. The cutter is already in the
+// board's LOCAL frame, so the board faces are ±(l,w,t)/2.
+export function overcutToBoard(box: CutterBox, board: Board): CutterBox {
+  const h: Vec3 = [board.dims.l / 2, board.dims.w / 2, board.dims.t / 2]
+  const min: Vec3 = [...box.min]
+  const max: Vec3 = [...box.max]
+  for (let i = 0; i < 3; i++) {
+    if (min[i] <= -h[i] + FLUSH_EPS) min[i] = -h[i] - OVERCUT
+    if (max[i] >= h[i] - FLUSH_EPS) max[i] = h[i] + OVERCUT
+  }
+  return { ...box, min, max }
 }
 
 // Turn a local-frame axis-aligned cutter box into a Manifold prism, returning the
@@ -42,7 +65,8 @@ export function buildCutter(M: ManifoldStatic, box: CutterBox): { manifold: Mani
 }
 
 // Board edge grooves → local-frame cutter boxes (§3.4). Carved in baseSolid BEFORE any
-// joint cutters — a groove is a board feature, not a joint partner (gotcha #7).
+// joint cutters — a groove is a board feature, not a joint partner (gotcha #7). Boxes
+// are EXACT; overcutToBoard opens the mouth + run-ends (gotcha #4) at carve time.
 //
 // Convention (no §3.4 edge text was loaded; documented here + in AGENT_HANDOFF gotcha):
 //   • top/bottom  = the ±y(width) long edges; groove runs along x(length), `depth` cuts
@@ -50,7 +74,7 @@ export function buildCutter(M: ManifoldStatic, box: CutterBox): { manifold: Mani
 //   • left/right  = the ±x(length) end edges; groove runs along y(width), `depth` cuts
 //                   inward along x (right = +x end, left = -x end).
 //   • `width` is the z(thickness) extent of the slot; `offset` shifts it along z.
-// The mouth (the open edge face) and the run ends are overcut unless a `stop_*` pins them.
+// A `stop_*` pulls a run end inward (interior → kept exact → a real stopped wall).
 export function edgeGrooveCutters(board: Board): CutterBox[] {
   const hx = board.dims.l / 2
   const hy = board.dims.w / 2
@@ -59,18 +83,16 @@ export function edgeGrooveCutters(board: Board): CutterBox[] {
     const z0 = g.offset - g.width / 2
     const z1 = g.offset + g.width / 2
     if (g.edge === 'top' || g.edge === 'bottom') {
-      // runs along x; stops (if any) pull the run ends in, else overcut them
-      const xLo = g.stopped && g.stop_near != null ? -hx + g.stop_near : -hx - OVERCUT
-      const xHi = g.stopped && g.stop_far != null ? hx - g.stop_far : hx + OVERCUT
-      const yLo = g.edge === 'top' ? hy - g.depth : -hy - OVERCUT
-      const yHi = g.edge === 'top' ? hy + OVERCUT : -hy + g.depth
+      const xLo = g.stopped && g.stop_near != null ? -hx + g.stop_near : -hx
+      const xHi = g.stopped && g.stop_far != null ? hx - g.stop_far : hx
+      const yLo = g.edge === 'top' ? hy - g.depth : -hy
+      const yHi = g.edge === 'top' ? hy : -hy + g.depth
       out.push({ min: [xLo, yLo, z0], max: [xHi, yHi, z1], feature: 'groove' })
     } else {
-      // left/right: runs along y; depth cuts inward along x
-      const yLo = g.stopped && g.stop_near != null ? -hy + g.stop_near : -hy - OVERCUT
-      const yHi = g.stopped && g.stop_far != null ? hy - g.stop_far : hy + OVERCUT
-      const xLo = g.edge === 'right' ? hx - g.depth : -hx - OVERCUT
-      const xHi = g.edge === 'right' ? hx + OVERCUT : -hx + g.depth
+      const yLo = g.stopped && g.stop_near != null ? -hy + g.stop_near : -hy
+      const yHi = g.stopped && g.stop_far != null ? hy - g.stop_far : hy
+      const xLo = g.edge === 'right' ? hx - g.depth : -hx
+      const xHi = g.edge === 'right' ? hx : -hx + g.depth
       out.push({ min: [xLo, yLo, z0], max: [xHi, yHi, z1], feature: 'groove' })
     }
   }

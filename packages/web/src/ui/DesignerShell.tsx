@@ -70,6 +70,7 @@ export function DesignerShell() {
   const gizmoMode = useModelStore((s) => s.gizmoMode)
   const panel = useModelStore((s) => s.panel)
   const warnings = useModelStore((s) => s.warnings)
+  const jointWarnings = useModelStore((s) => s.jointWarnings)
   const selection = useModelStore((s) => s.selection)
   const addDialogOpen = useModelStore((s) => s.addDialogOpen)
   const canUndo = useModelStore((s) => s.undoStack.length > 0)
@@ -80,7 +81,7 @@ export function DesignerShell() {
   const precision = ctx.settings?.fraction_precision ?? 16
   const shadows = ctx.settings?.viewport_shadows ?? true
   const snapGrid = ctx.settings?.snap_grid ?? 0.0625
-  const lintCount = warnings.length
+  const lintCount = warnings.length + jointWarnings.length
 
   // Load model on mount / id change, then frame it.
   useEffect(() => {
@@ -470,13 +471,16 @@ function Outliner() {
 }
 
 function LintList() {
+  // Authoritative analytic lint (collision/precondition) + post-carve joint geometry lint.
   const warnings = useModelStore((s) => s.warnings)
-  if (warnings.length === 0) {
-    return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-faint)', padding: 'var(--sp-2)' }}>✓ No unresolved collisions. Lint sharpens once the geometry evaluator lands (chunk 9).</span>
+  const jointWarnings = useModelStore((s) => s.jointWarnings)
+  const all = [...warnings, ...jointWarnings]
+  if (all.length === 0) {
+    return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-faint)', padding: 'var(--sp-2)' }}>✓ No unresolved collisions or joinery warnings.</span>
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
-      {warnings.map((w, i) => (
+      {all.map((w, i) => (
         <div key={i} style={{ fontSize: 'var(--text-xs)', color: 'var(--warn)', padding: '2px var(--sp-2)' }}>
           <b>{w.code}</b> — {w.msg}
         </div>

@@ -41,6 +41,11 @@ function buildBoard({ id, mesh }: { id: string; mesh: EvalMesh }): CarvedBoard {
   geometry.setAttribute('position', new THREE.BufferAttribute(mesh.positions, 3))
   geometry.setAttribute('normal', new THREE.BufferAttribute(mesh.normals, 3))
   // Non-indexed triangle soup — no setIndex needed (mesh.ts de-indexes every triangle).
+  // Carry per-triangle provenance + the feature table on userData so it survives into the
+  // store's BufferGeometry map (which keeps only the geometry). Stored, unused until
+  // chunk 11's face-pick → joint highlight (docs/chunk9-design.md §5).
+  geometry.userData.provenance = mesh.provenance
+  geometry.userData.features = mesh.features
   return { id, geometry, provenance: mesh.provenance, features: mesh.features }
 }
 

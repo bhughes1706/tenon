@@ -38,7 +38,13 @@ interface ModelState {
   mode: ViewportMode
   gizmoMode: GizmoMode
   panel: DesignerPanel
+  // Authoritative analytic lint (collision + precondition) — server-sourced, see below.
   warnings: Warning[]
+  // Joint GEOMETRY lint (thin tenon/wall, near-through, unimplemented features) — these
+  // only exist post-carve, so the worker is their sole source (the analytic codes it also
+  // returns are filtered out here, since `warnings` already owns them). Merged with
+  // `warnings` for display (LintList).
+  jointWarnings: Warning[]
   // Worker-carved board geometries (chunk 9 §5). Boards absent from the map fall
   // back to a flat <boxGeometry> in the viewport while the worker computes.
   meshes: Map<string, BufferGeometry>
@@ -93,6 +99,10 @@ interface ModelState {
 // Monotonic guard so a slow eval that resolves after a newer one started is dropped
 // (the geometry worker also coalesces, but an already-sent eval still resolves stale).
 let evalSeq = 0
+
+// Warning codes the analytic core owns (server-authoritative via OpResult.warnings).
+// The worker re-derives them too; we drop them from jointWarnings so lint shows one copy.
+const ANALYTIC_CODES = new Set<string>(['UNRESOLVED_COLLISION', 'JOINT_PRECONDITION_FAILED'])
 
 // Free every geometry in a map (dispose-on-replace, §4). Safe because the store is a
 // singleton — this is NOT a React effect cleanup, so it dodges the StrictMode trap
@@ -172,6 +182,7 @@ export const useModelStore = create<ModelState>((set, get) => {
     gizmoMode: 'translate',
     panel: null,
     warnings: [],
+    jointWarnings: [],
     meshes: new Map(),
     snapGrid: 0.0625,
     scene: null,
@@ -195,6 +206,7 @@ export const useModelStore = create<ModelState>((set, get) => {
         undoStack: [],
         redoStack: [],
         warnings: [],
+        jointWarnings: [],
         meshes: new Map(),
       })
       try {
@@ -257,7 +269,9 @@ export const useModelStore = create<ModelState>((set, get) => {
         return
       }
       const prev = get().meshes
-      set({ meshes: next })
+      // Adopt the carved meshes + the joint geometry warnings (analytic codes filtered;
+      // `warnings` already carries the authoritative collision/precondition lint).
+      set({ meshes: next, jointWarnings: result.warnings.filter((w) => !ANALYTIC_CODES.has(w.code)) })
       disposeMeshes(prev, next) // free the geometries we just replaced
     },
 
