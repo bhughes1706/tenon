@@ -12,7 +12,12 @@ export const halfLap: JointFn = (a, b, params) => {
   if (!R) return { a: [], b: [], warnings: [] }
 
   // Split along the overlap's thinnest axis — for two flat crossing boards that's the
-  // stacked-thickness direction (the contact normal).
+  // stacked-thickness direction (the contact normal). ASSUMPTION: the thinnest overlap
+  // axis is the stacking axis. Holds for typical crossing and face-laps. Breaks for an
+  // end-lap where the engagement length is shorter than the stock thickness — there
+  // minAxis picks the length axis and the split goes the wrong way. Acceptable for v1
+  // (end-laps with thin stock are uncommon); tighten by preferring the axis of greatest
+  // board-centre separation if this becomes a real issue.
   const s = minAxis(extent(R))
   const H = R.max[s] - R.min[s]
 

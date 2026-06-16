@@ -62,6 +62,9 @@ export interface EvalCtx {
   tol: number // 1/64
 }
 
+// ctx is a reserved seam: no first-wave JointFn uses it yet, but it will be needed for
+// features that require model-level state (e.g. haunch derives from model edge_grooves)
+// or the tolerance constant. Pass it through; don't remove it.
 export type JointFn = (a: BoardSolid, b: BoardSolid, params: Record<string, unknown>, ctx: EvalCtx) => CutterSet
 
 // Transferable carved mesh for one board. All typed arrays' .buffers go in the

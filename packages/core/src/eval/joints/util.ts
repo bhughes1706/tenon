@@ -48,6 +48,10 @@ export const thickAxisW = (s: BoardSolid): Axis => dominantAxis(s.obb.axes[2])
 // The remaining axis given two distinct ones (0+1+2 = 3).
 export const otherAxis = (i: Axis, j: Axis): Axis => (3 - i - j) as Axis
 
+// NOTE: requireContact() in geometry/preconditions.ts treats a gap ≤ CONTACT_TOL (1/64")
+// as touching so grid-snapping float gaps don't reject a valid joint. This call is the
+// strict overlapRegion (null on any gap), so a joint that cleared the precondition via
+// the 1/64" grace returns no cutters here — silent, but the gap is sub-visual.
 export const worldOverlap = (a: BoardSolid, b: BoardSolid): AABB | null => overlapRegion(a.aabb, b.aabb)
 
 // Round to the nearest tool increment (1/8" bridle, 1/16" M&T) — snap_to_tool.

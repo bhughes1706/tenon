@@ -16,9 +16,9 @@ import type { EvalMesh } from '@tenon/core/eval'
 export interface CarvedBoard {
   id: string
   geometry: THREE.BufferGeometry
-  // Carried for chunk 11's face-pick → joint highlight. Stored, unused until then.
-  provenance: Uint16Array
-  features: EvalMesh['features']
+  // provenance + features are stored on geometry.userData (set in buildBoard below) for
+  // chunk 11's face-pick → joint highlight. The store only keeps geometry, so userData
+  // is the only channel that survives; no need for top-level struct fields.
 }
 
 export interface CarveResult {
@@ -46,7 +46,7 @@ function buildBoard({ id, mesh }: { id: string; mesh: EvalMesh }): CarvedBoard {
   // chunk 11's face-pick → joint highlight (docs/chunk9-design.md §5).
   geometry.userData.provenance = mesh.provenance
   geometry.userData.features = mesh.features
-  return { id, geometry, provenance: mesh.provenance, features: mesh.features }
+  return { id, geometry }
 }
 
 function ensureWorker(): Worker {

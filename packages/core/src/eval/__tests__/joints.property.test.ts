@@ -178,6 +178,88 @@ describe('mortise_tenon — warnings', () => {
   })
 })
 
+// Placement tests: for each joint, assert that the cutter(s) land on the CORRECT face /
+// axis, not just inside the board. These catch axis-swap or wrong-face regressions that
+// removed-volume tests can't see (volume is the same either way). Each assertion targets
+// a board with no rotation so local frame = world frame (shifted by pos), keeping the
+// expected values readable without matrix math.
+describe('JointFns — cut placement', () => {
+  const ctx = (a: Board, b: Board, type: JointType) => ({
+    model: jointModel(a, b, type),
+    tol: 1 / 64,
+  })
+
+  it('housing: dado is on the contacted face of a (top Z face)', () => {
+    // a=24×12×0.75 flat panel, b enters from +Z; dado should open at a's +Z face.
+    const c = CASES.find((x) => x.name === 'housing')!
+    const fn = JOINT_FNS['housing']!
+    const set = fn(solid(c.a), solid(c.b), {}, ctx(c.a, c.b, 'housing'))
+    expect(set.a).toHaveLength(1)
+    // Cutter max Z = +t_a/2 = 0.375 (flush with a's top face — overcut opens it at carve time).
+    expect(set.a[0].max[2]).toBeCloseTo(0.375, 5)
+    // Cutter depth = t_a/3 = 0.25, so min Z = 0.375 − 0.25 = 0.125 (interior wall, stays exact).
+    expect(set.a[0].min[2]).toBeCloseTo(0.125, 5)
+  })
+
+  it('rabbet: L-notch is on the right face AND edge of a', () => {
+    // a=24×6×0.75 at origin, b contacts the +Y edge from +Z side.
+    // depth (t_a/2=0.375) cut into +Z face; width (t_b=0.5) strip at +Y edge.
+    const c = CASES.find((x) => x.name === 'rabbet')!
+    const fn = JOINT_FNS['rabbet']!
+    const set = fn(solid(c.a), solid(c.b), {}, ctx(c.a, c.b, 'rabbet'))
+    expect(set.a).toHaveLength(1)
+    expect(set.a[0].max[2]).toBeCloseTo(0.375, 5)  // +Z face (depth axis)
+    expect(set.a[0].min[2]).toBeCloseTo(0, 5)       // depth = t_a/2, so 0.375−0.375=0
+    expect(set.a[0].max[1]).toBeCloseTo(3, 5)       // +Y edge (w_a/2=3, where b sits)
+    expect(set.a[0].min[1]).toBeCloseTo(2.5, 5)     // width = t_b=0.5, so 3−0.5=2.5
+  })
+
+  it('half_lap: a loses the bottom Z half, b loses the top Z half (split=0.5)', () => {
+    // Two equal rails crossing in plan. Split axis = Z (thinnest: 0.75 vs 2×2).
+    // a is "on top" (both centres at Z=0; a wins tie). a removes Z:[−0.375, 0], b Z:[0, +0.375].
+    // b is rotated 90° around Z; in b's local frame the cut is also its +Z half.
+    const c = CASES.find((x) => x.name === 'half_lap')!
+    const fn = JOINT_FNS['half_lap']!
+    const set = fn(solid(c.a), solid(c.b), {}, ctx(c.a, c.b, 'half_lap'))
+    // a (no rotation): cutter is bottom half in local Z.
+    expect(set.a[0].min[2]).toBeCloseTo(-0.375, 5)
+    expect(set.a[0].max[2]).toBeCloseTo(0, 5)
+    // b (rotated 90° around Z): in b's local frame the cutter is the top half in local Z.
+    expect(set.b[0].min[2]).toBeCloseTo(0, 5)
+    expect(set.b[0].max[2]).toBeCloseTo(0.375, 5)
+  })
+
+  it('bridle: slot is centred in thickness and reaches a\'s end face', () => {
+    // a=6×2×1 at [−3,0,0]. The overlap is at a's right end (+X face).
+    // Tenon = snap(1/3 * 1, 1/8) = 0.375. Slot centred: Z:[−0.1875, +0.1875].
+    const c = CASES.find((x) => x.name === 'bridle')!
+    const fn = JOINT_FNS['bridle']!
+    const set = fn(solid(c.a), solid(c.b), {}, ctx(c.a, c.b, 'bridle'))
+    expect(set.a).toHaveLength(1)
+    // Slot reaches a's +X end face (halfL = 3).
+    expect(set.a[0].max[0]).toBeCloseTo(3, 5)
+    // Slot is centred in Z: midpoint ≈ 0.
+    expect((set.a[0].min[2] + set.a[0].max[2]) / 2).toBeCloseTo(0, 5)
+    // Tenon thickness = 0.375 → slot extent in Z = 0.375.
+    expect(set.a[0].max[2] - set.a[0].min[2]).toBeCloseTo(0.375, 5)
+  })
+
+  it('mortise_tenon: mortise is centred in a\'s thickness and runs full depth (through)', () => {
+    // a=4×4×1.5 at origin. b enters along Z; tAxis=X; tenonThk=snap(0.5,1/16)=0.5.
+    // Mortise: X:[−0.25,+0.25] (centred), Z:[−0.75,+0.75] (through).
+    const c = CASES.find((x) => x.name === 'mortise_tenon')!
+    const fn = JOINT_FNS['mortise_tenon']!
+    const set = fn(solid(c.a), solid(c.b), {}, ctx(c.a, c.b, 'mortise_tenon'))
+    expect(set.a).toHaveLength(1)
+    // Centred in a's thickness axis (X): ±tenonThk/2 = ±0.25.
+    expect(set.a[0].min[0]).toBeCloseTo(-0.25, 5)
+    expect(set.a[0].max[0]).toBeCloseTo(0.25, 5)
+    // Through mortise: full Z extent of a = ±t_a/2 = ±0.75.
+    expect(set.a[0].min[2]).toBeCloseTo(-0.75, 5)
+    expect(set.a[0].max[2]).toBeCloseTo(0.75, 5)
+  })
+})
+
 describe('evaluate — joint-level warnings', () => {
   it('warns JOINT_FEATURE_UNIMPLEMENTED for a deferred joint type (box_joint)', async () => {
     const a = board({ id: 'brd_a', l: 6, w: 4, t: 0.75, pos: [0, 0, 0] })
