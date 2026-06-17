@@ -15,14 +15,31 @@ import type { Warning } from '../common.js'
 import { WarningCode } from '../common.js'
 import { worldAABB, worldOBB } from '../geometry/aabb.js'
 import { checkJointPrecondition, CONTACT_TOL } from '../geometry/preconditions.js'
-import type { BoardSolid, CutFeature, CutterBox, EvalCtx, EvalMesh, EvalResult } from './types.js'
+import type { BoardSolid, CutFeature, CutterBox, EvalCache, EvalCtx, EvalMesh, EvalResult } from './types.js'
 import { baseSolid, buildCutter, edgeGrooveCutters, overcutToBoard } from './solids.js'
 import { toEvalMesh } from './mesh.js'
 import { JOINT_FNS } from './joints/index.js'
 
 type ManifoldStatic = Parameters<typeof buildCutter>[0]
 
-export async function evaluate(model: Model): Promise<EvalResult> {
+// A fresh, empty per-board carve memo (§8). The worker creates one and reuses it for
+// every eval; tests create one to assert reuse/invalidation.
+export function createEvalCache(): EvalCache {
+  return { boards: new Map() }
+}
+
+// Stable key over everything a board's LOCAL carve depends on: its box dims and its
+// cutter boxes. The cutter boxes already fold in joint params + mate transforms (the
+// JointFns convert the world overlap into this board's local frame), so this is the
+// complete dependency set — the board's own world transform is applied by R3F, never
+// baked into the local mesh. Cutters are normalized to positional tuples so the key
+// does not depend on object-property order.
+function carveKey(board: Board, cutters: CutterBox[]): string {
+  const c = cutters.map((x) => [x.min, x.max, x.feature, x.jointId ?? null])
+  return JSON.stringify([board.dims.l, board.dims.w, board.dims.t, c])
+}
+
+export async function evaluate(model: Model, cache?: EvalCache): Promise<EvalResult> {
   const { Manifold } = await getManifold()
   const warnings: Warning[] = []
 
@@ -76,10 +93,29 @@ export async function evaluate(model: Model): Promise<EvalResult> {
     }
   }
 
-  // 3. Carve each board from its accumulated cutter boxes.
+  // 3. Carve each board from its accumulated cutter boxes. With a cache, reuse the prior
+  //    mesh when the carve key is unchanged (per-board memo, §8) — unaffected boards skip
+  //    the Manifold carve entirely; only the cheap joint loop above re-runs. Warnings are
+  //    always recomputed (the loop runs in full), so the memo never stales lint.
   const boards: { id: string; mesh: EvalMesh }[] = []
   for (const board of model.boards) {
-    boards.push({ id: board.id, mesh: evaluateBoard(Manifold, board, cuttersByBoard.get(board.id) ?? []) })
+    const cutterBoxes = cuttersByBoard.get(board.id) ?? []
+    const key = carveKey(board, cutterBoxes)
+    const hit = cache?.boards.get(board.id)
+    let mesh: EvalMesh
+    if (hit && hit.key === key) {
+      mesh = hit.mesh
+    } else {
+      mesh = evaluateBoard(Manifold, board, cutterBoxes)
+      cache?.boards.set(board.id, { key, mesh })
+    }
+    boards.push({ id: board.id, mesh })
+  }
+  // Prune cache entries for boards no longer in the model (snapshot the keys so we can
+  // delete while iterating). Keeps the cache bounded to the live board set.
+  if (cache) {
+    const live = new Set(model.boards.map((b) => b.id))
+    for (const id of [...cache.boards.keys()]) if (!live.has(id)) cache.boards.delete(id)
   }
 
   return { boards, warnings }

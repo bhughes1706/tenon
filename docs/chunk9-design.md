@@ -313,3 +313,38 @@ All six first-wave JointFns are implemented and tested. Core: **107 tests** (was
 - **Provenance is wired** (per-triangle `Uint16Array` + `CutFeature[]` with `jointId`, carried on the carved geometry's `userData` via `geometryClient`) but the **face-pick UI stays chunk 11**.
 - **Square haunch / deferred M&T sub-features / housing shoulder** carves (see decision 2).
 - **Headless viewport screenshot of a carved joint not yet captured this session** — unit + golden tests verify the geometry; the carved-mesh render path (worker → store → `BoardMesh`) typechecks and prod-builds but wasn't screenshotted.
+
+---
+
+## Stage 5 results — 2026-06-16 (§11 step 5: provenance/memo/perf + verification → CHUNK 9 COMPLETE)
+
+Stage 5 closes chunk 9: per-board memoization, a perf measurement against the §8 budget, and the headless render verification the prior stages deferred. Provenance was already wired in Stage 4 (per-triangle `Uint16Array` + `CutFeature[]` carrying `jointId`, set on the carved `geometry.userData` by `geometryClient`); the chunk-11 face-pick contract is documented in `mesh.ts`/`geometryClient.ts` and unchanged here.
+
+### Per-board memo (§8)
+`evaluate(model, cache?)` now takes an optional `EvalCache` (factory `createEvalCache()`; both exported from `@tenon/core/eval`, type in `eval/types.ts`). The insight: a board's **LOCAL** carve is a pure function of `(board.dims, cutterBoxes)`. The cutter boxes already fold in joint params + mate transforms (the JointFns convert the world overlap into the board's local frame), and the board's own world transform is applied by R3F, never baked into the local mesh — so a stable key over `(dims, cutters)` is the *complete* dependency set. An unchanged key reuses the prior `EvalMesh` and skips the Manifold carve. The joint loop (precondition re-check + warning emission) always runs in full, so the memo never stales lint. Deleted boards are pruned each eval; the cache stays bounded to the live board set.
+
+The worker (`geometry.worker.ts`) owns one cache for its lifetime. **It no longer transfers mesh buffers** — the cache holds canonical meshes and transferring would detach them, so `postMessage` structured-clones the typed arrays instead. At board-scale mesh sizes the copy is trivially cheaper than re-carving the boards the memo just skipped, and each response stays a complete self-contained snapshot (robust to the store's latest-wins drop of a superseded result). *(This supersedes the §2e/§4 "post buffers in the transfer list" sketch — once a per-board mesh cache exists you pay one copy either way; structured clone is the simplest correct form. See `geometry.worker.ts` for the note.)*
+
+Tests: `__tests__/memo.test.ts` (5) — unchanged model → every board reused (asserted by `EvalMesh` instance identity); **moving a joint-free board is a cache hit** (proves the local-carve memo); a board dims change re-carves only that board; a joint-param change re-carves both participants, bystander reused; a removed board is pruned from the cache.
+
+### Performance (§8 — measured; dirty-board incremental stays deferred)
+`__tests__/perf.bench.test.ts` is gated behind `PERF=1` (skipped in the normal suite, so no timing flake in CI). It builds a worst-case model at the budget ceiling — **96 boards / 192 half_laps** as 12 independent 4×4 crossing lattices, every joint's precondition satisfied. On the dev Mac (Node 20, `manifold-3d@3.5.1`):
+
+| Measure | Time | Budget |
+|---|---|---|
+| init (incl. one-time WASM init) | ~67 ms | warmed on mount |
+| **full re-eval** (warm, no cache) | **~28 ms** | **< 250 ms** ✓ |
+| cached (warm cache, no change) | ~0.6 ms | — |
+| **incremental** (warm cache, 1 board moved) | **~3.5 ms** | **< 50 ms** ✓ |
+
+Full re-eval is ~9× under the 250 ms budget, so **true dirty-board incremental (only re-post changed boards) stays deferred** per §8 — the per-board memo already brings a one-board edit to ~3.5 ms (~14× under the 50 ms incremental budget). Re-measure with `PERF=1 corepack pnpm --filter @tenon/core test perf.bench` (do it on a kernel bump, §16.5).
+
+### Headless render verification (acceptance criteria — resolves the Stage-4 caveat)
+Verified the carved-joint render path (worker → store → `BoardMesh`) end-to-end in headless Chrome — system Chrome + `--use-angle=swiftshader` software WebGL, driven by `puppeteer-core` (installed ad-hoc, **not committed** as a dep; screenshots land in the gitignored `docs/screenshots/chunk9/`). Recipe: build & run the server (throwaway `DATA_DIR`, `PORT=3000`, `NODE_ENV=development`), `vite dev` (proxies `/api`), create models via `POST /api/models` then `/ops` (`add_board`×2 + `add_joint`), drive Chrome to `/designer/:id`, wait ~4 s for the worker carve, screenshot.
+
+- **half_lap** (two crossing boards): renders **complementary laps carved** — each board notched so they interlock at the crossing. ✓
+- **mortise_tenon** (rail tenoned into a stile's face, T-joint): renders the carved assembled joint, "✓ no lint". The mortise/tenon are concealed inside an assembled joint (as in real joinery) — their exact geometry (mortise = `thickness·width·depth`, the tenon volume identity, and `THIN_TENON`/`THIN_MORTISE_WALL`/`NEAR_THROUGH` warnings) is proven by the golden + property suites.
+- **0 JS / worker / WASM console errors** in both (only a benign `favicon.ico` 404). This ran on the **memo-modified worker** (structured-clone response + lifetime cache), confirming Stage 5 didn't regress rendering.
+
+### Final state — chunk 9 COMPLETE
+Core **117** tests (+5 memo; `perf.bench` gated/skipped), web **65**, server **16** — all green; all three typecheck. Server bundle **0 manifold refs**; web main `index` bundle **0 manifold / 0 BufferGeometry**, **402 KB** (THREE/WASM split into `three.core` + `geometry.worker` + the `manifold.wasm` asset). All §6.1 invariants and the acceptance criteria are met.

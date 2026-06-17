@@ -72,7 +72,7 @@ corepack pnpm --filter @tenon/server typecheck
 corepack pnpm --filter @tenon/web typecheck
 
 # Tests
-corepack pnpm --filter @tenon/core test    # 77 tests (analytic geometry + evaluator)
+corepack pnpm --filter @tenon/core test    # 117 tests (analytic geometry + evaluator + memo)
 corepack pnpm --filter @tenon/server test  # 16 tests
 corepack pnpm --filter @tenon/web test     # 65 tests
 ```
@@ -129,6 +129,7 @@ Available tools: `list_jobs`, `get_job`, `create_job`, `update_job`, `log_note`,
 ## Key design decisions
 
 - **Board-local carves** — geometry is evaluated in each board's local frame (box at origin); the R3F `<group>` holds the world transform. This keeps the gizmo, snapping, and collision paths untouched when the carve source changes.
+- **Per-board carve memo** — because a board's local mesh is a pure function of its dims + cutter boxes, the worker caches it per board and reskips the Manifold carve when nothing about that board changed. A full re-eval at the worst-case ceiling (96 boards / 192 joints) is ~28 ms; a one-board edit ~3.5 ms.
 - **Server stays WASM-free** — `manifold-3d` is in `@tenon/core/eval` (subpath export, worker + tests only). The server imports base `@tenon/core` and uses analytic AABB geometry for collision and joint preconditions — exact for v1's 90°-multiple rotations.
 - **Warning authority** — the client runs an analytic collision pass for instant optimistic lint; the server's pass is authoritative and its result replaces the client's on `ok`.
 - **`manifold-3d` is exact-pinned** at `3.5.1` (no caret). Don't bump without regenerating the golden test snapshots.

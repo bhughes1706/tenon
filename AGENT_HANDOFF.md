@@ -1,38 +1,38 @@
 # Tenon — Agent Handoff Document
 
-**Date:** 2026-06-15 (chunk 9 IN PROGRESS — Stages 2, 3 & 4 done; Stage 5 = provenance/memo/perf+docs is next; see below)  
+**Date:** 2026-06-16 (chunk 9 COMPLETE — all 5 stages done & committed; chunk 10 = cut list is next)  
 **Repo:** https://github.com/bhughes1706/tenon  
 **Spec:** `/Users/Brian/Downloads/tenon-spec-v0.4.md` (always load this — it is the ground truth)
 
 ---
 
-## ⏩ CHUNK 9 — IN PROGRESS (RESUME HERE)
+## ✅ CHUNK 9 — COMPLETE
 
-Chunk 9 (geometry evaluator) is being built in the 5 stages of `docs/chunk9-design.md` §11.
-**Read `docs/chunk9-design.md` in full first.** Status of each stage:
+Chunk 9 (geometry evaluator) shipped in the 5 stages of `docs/chunk9-design.md` §11.
+**Read `docs/chunk9-design.md` in full** (incl. the Stage 4 + Stage 5 results) before extending the evaluator. Status of each stage:
 
 | Stage | What | Status |
 |---|---|---|
 | 1. Spike | manifold-3d boots + carves in worker/vitest | ✅ **committed** (`12e21ee`) |
 | 2. Analytic core | `geometry/{aabb,preconditions,collision}` + tests, validateOps step 3, server + store warning authority | ✅ **committed** (`236ae41`) |
 | 3. Eval skeleton | solids/evaluate/mesh (base + grooves), worker RPC, store meshes, viewport swap, delete spike scaffolding | ✅ **committed** (`0f0e66b`) |
-| 4. Six JointFns | housing→rabbet→half_lap→butt→bridle→mortise_tenon + golden/property tests | ✅ **DONE, green, UNCOMMITTED** |
-| 5. Provenance/memo/perf | + docs + handoff | ⬜ **NEXT** — provenance wired; memo/perf measurement + headless render check remain |
+| 4. Six JointFns | housing→rabbet→half_lap→butt→bridle→mortise_tenon + golden/property tests | ✅ **committed** (`dd747e1`, peer-review `8df7290`) |
+| 5. Provenance/memo/perf | per-board memo + perf measurement + headless render verification + docs | ✅ **DONE** — see `docs/chunk9-design.md` "Stage 5 results" |
 
-**Stages 1–3 are committed** (`12e21ee`, `236ae41`, `0f0e66b`). **Stage 4 is in the working tree, green, uncommitted.** Stage-4 design notes + deviations are in `docs/chunk9-design.md` "Stage 4 results" (read it).
+**Stage 5 in one line:** `evaluate(model, cache?)` gained a per-board carve memo (`createEvalCache()`, keyed on `board.dims` + cutter boxes — the complete local-carve dependency set); the worker owns one cache and **no longer transfers buffers** (structured-clone keeps the cache intact). Measured at the §8 ceiling (96 boards/192 joints): full re-eval ~28 ms (< 250 budget), one-board incremental ~3.5 ms (< 50 budget) — so dirty-board incremental stays deferred. Carved half_lap + mortise_tenon render verified headless (swiftshader), 0 JS errors.
 
 ### Verify current state
 ```bash
 corepack pnpm --filter @tenon/core build      # build first — web/server depend on dist
-corepack pnpm --filter @tenon/core typecheck && corepack pnpm --filter @tenon/core test     # 107 pass
+corepack pnpm --filter @tenon/core typecheck && corepack pnpm --filter @tenon/core test     # 117 pass (+1 perf.bench skipped)
 corepack pnpm --filter @tenon/web typecheck   && corepack pnpm --filter @tenon/web test      # 65 pass
 corepack pnpm --filter @tenon/server typecheck && corepack pnpm --filter @tenon/server test  # 16 pass
 corepack pnpm --filter @tenon/server build && grep -ci manifold packages/server/dist/index.js  # → 0 (§6 invariant)
 corepack pnpm --filter @tenon/web build        # prod build: emits geometry.worker + manifold.wasm assets; main bundle stays 402 KB (no THREE/WASM)
 ```
-Counts: core **107** (Stage 4 added 24 property + 6 golden joint tests: 77+30); web **65** (unchanged); server **16**. **Server bundle has 0 manifold refs**; web **main `index` bundle has 0 manifold / 0 `BufferGeometry`** (THREE is code-split into `three.core` + `geometry.worker` + the `manifold.wasm` asset) — design §6 invariant holds.
+Counts: core **117** (Stage 4 added 24 property + 6 golden; Stage 5 added 5 memo tests + 1 gated `perf.bench`); web **65** (unchanged); server **16**. **Server bundle has 0 manifold refs**; web **main `index` bundle has 0 manifold / 0 `BufferGeometry`** (THREE is code-split into `three.core` + `geometry.worker` + the `manifold.wasm` asset) — design §6 invariant holds.
 
-> ⚠️ **Carved-joint render NOT headless-verified this session.** Core unit/golden tests rigorously verify the geometry (exact removed volumes, half-lap complement, idempotence, manifold validity, M&T warnings) and the web prod build is green, but the worker→store→`BoardMesh` carved render with a real joint was not screenshotted (puppeteer-swiftshader recipe in §"Local Verification"). Good first Stage-5 / manual check: load a 2-board model, add a `half_lap` (boards render with complementary laps) and a `mortise_tenon` (mortise + shouldered tenon), confirm selection/hover outlines derive from the carved geom.
+> ✅ **Carved-joint render headless-verified (Stage 5).** A `half_lap` (two crossing boards → complementary laps carved) and a `mortise_tenon` (rail tenoned into a stile → carved assembled joint, "✓ no lint") render through worker→store→`BoardMesh` with **0 JS/worker/WASM errors** (swiftshader software WebGL via `puppeteer-core`; screenshots in gitignored `docs/screenshots/chunk9/`). Verified on the memo-modified worker. Concealed M&T joinery dimensions are proven by the golden/property suites. Recipe is in `docs/chunk9-design.md` "Stage 5 results".
 
 ### Stage 2 — DONE (files in working tree)
 **New (core):** `src/geometry/aabb.ts` (worldAABB, worldOBB, overlapRegion, intersectVolume, isAxisAligned, eulerXYZToMat3/applyMat3/transpose, **worldBoxToLocal**, extent/center, types Vec3/AABB/OBB) · `src/geometry/collision.ts` (recomputeWarnings, narrowphase seam, COLLISION_VOL_EPS=1e-6) · `src/geometry/preconditions.ts` (checkJointPrecondition, CONTACT_TOL=1/64, MT_MIN_ENGAGEMENT=0.5) · `src/geometry/index.ts` · `src/geometry/__tests__/{aabb,collision,preconditions}.test.ts`.
@@ -299,8 +299,8 @@ This does not block chunk 9. It can be applied as a one-commit patch at any poin
 |---|---|---|
 | ~~7~~ | ~~Viewport: R3F scene, orbit, board render, transform gizmo, Select/Add/Measure modes~~ | **DONE** |
 | ~~8~~ | ~~Snapping (face/edge/end magnetism), collision broadphase, outliner tree, context menu~~ | **DONE** |
-| **9** | **Manifold WASM geometry evaluator in web worker; joint evaluation pipeline; housing/rabbet/half-lap/M&T/box/dovetail** | 7 — **NEXT CHUNK** |
-| 10 | Cut list (board → rough stock → waste factors), species cost, materials summary | 9 |
+| ~~9~~ | ~~Manifold WASM geometry evaluator in web worker; joint evaluation pipeline; housing/rabbet/half-lap/bridle/butt/M&T (box/dovetail deferred)~~ | **DONE** |
+| **10** | **Cut list (board → rough stock → waste factors), species cost, materials summary** | 9 — **NEXT CHUNK** |
 | 11 | Joint dialog + lint resolve flow; `render_view` MCP tool | 9 |
 | 12 | Photo capture tab (camera API, phone-first) | 6 |
 | 13 | Bid engine (materials + hardware + labor + overhead + margin), `estimate_bid` MCP tool | 10 |

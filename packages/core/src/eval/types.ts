@@ -83,3 +83,13 @@ export interface EvalResult {
   boards: { id: string; mesh: EvalMesh }[]
   warnings: Warning[]
 }
+
+// Per-board carve memo (docs/chunk9-design.md §8). Maps board id → the carve key (a
+// stable hash of everything the LOCAL carve depends on: the board dims + its cutter
+// boxes) and the EvalMesh that key produced. evaluate() reuses the cached mesh when the
+// key is unchanged, skipping the Manifold carve. The worker holds one cache for its
+// lifetime; it structured-clones meshes to the main thread, so a reused (cached) mesh
+// is never detached/mutated. Boards no longer in the model are pruned each eval.
+export interface EvalCache {
+  boards: Map<string, { key: string; mesh: EvalMesh }>
+}
