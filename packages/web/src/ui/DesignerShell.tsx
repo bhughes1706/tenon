@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import {
   MousePointer2, Plus, Ruler, Layers, AlertTriangle, List,
   Undo2, Redo2, Moon, Sun, Hammer, Search, Move3d, RotateCw,
+  Highlighter,
 } from 'lucide-react'
 import type { Board } from '@tenon/core'
 import { useAppCtx } from '../lib/AppContext.js'
@@ -51,6 +52,24 @@ function TopBtn({ onClick, title, active, disabled, children }: {
   )
 }
 
+// A compact labelled slider for the viewport's joint-view overlay (explode / isolate).
+function ViewSlider({ label, value, active, muted, title, onChange }: {
+  label: string; value: number; active: boolean; muted?: boolean; title: string
+  onChange: (v: number) => void
+}) {
+  const color = muted ? 'var(--text-faint)' : active ? 'var(--accent)' : 'var(--text-muted)'
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', color }} title={title}>
+      <span style={{ fontFamily: 'monospace', width: 52 }}>{label}</span>
+      <input
+        type="range" min={0} max={1} step={0.02} value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        style={{ width: 96, accentColor: 'var(--accent)', cursor: 'pointer' }}
+      />
+    </div>
+  )
+}
+
 function isTyping(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false
   return el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA' || el.isContentEditable
@@ -68,6 +87,9 @@ export function DesignerShell() {
   const toast = useModelStore((s) => s.toast)
   const mode = useModelStore((s) => s.mode)
   const gizmoMode = useModelStore((s) => s.gizmoMode)
+  const exploded = useModelStore((s) => s.exploded)
+  const isolate = useModelStore((s) => s.isolate)
+  const highlightJoints = useModelStore((s) => s.highlightJoints)
   const panel = useModelStore((s) => s.panel)
   const warnings = useModelStore((s) => s.warnings)
   const jointWarnings = useModelStore((s) => s.jointWarnings)
@@ -195,6 +217,8 @@ export function DesignerShell() {
         <div style={{ width: 1, height: 16, background: 'var(--border-strong)', margin: '0 2px' }} />
         <TopBtn title="Move gizmo (G)" active={gizmoMode === 'translate'} onClick={() => store().setGizmoMode('translate')}><Move3d size={14} /></TopBtn>
         <TopBtn title="Rotate gizmo (R)" active={gizmoMode === 'rotate'} onClick={() => store().setGizmoMode('rotate')}><RotateCw size={14} /></TopBtn>
+        <div style={{ width: 1, height: 16, background: 'var(--border-strong)', margin: '0 2px' }} />
+        <TopBtn title="Highlight joint faces" active={highlightJoints} onClick={() => store().toggleHighlightJoints()}><Highlighter size={14} /></TopBtn>
 
         <div style={{ flex: 1 }} />
 
@@ -253,6 +277,30 @@ export function DesignerShell() {
         <ViewportContextMenu ctx={ctx}>
           <Viewport precision={precision} shadows={shadows} />
         </ViewportContextMenu>
+
+        {/* Joint-view controls. Explode drags mating boards apart so concealed joinery is
+            revealed (diagrammatic centroid-radial separation, see explode.ts). Isolate fades
+            the non-selected boards so a selected joint reads in place. */}
+        <div style={{
+          position: 'absolute', right: 'var(--sp-3)', top: 'var(--sp-3)', zIndex: 10,
+          display: 'flex', flexDirection: 'column', gap: 4,
+          background: 'var(--surface-overlay)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-m)', padding: 'var(--sp-2) var(--sp-3)',
+          fontSize: 'var(--text-xs)',
+        }}>
+          <ViewSlider
+            label="explode" value={exploded} active={exploded > 0}
+            title="Slide boards apart to reveal joinery"
+            onChange={(v) => store().setExploded(v)}
+          />
+          <ViewSlider
+            label="isolate" value={isolate} active={isolate > 0}
+            // Cue that isolate needs a selection to do anything.
+            muted={isolate > 0 && selection.length === 0}
+            title={selection.length === 0 ? 'Select a board, then fade the rest' : 'Fade non-selected boards'}
+            onChange={(v) => store().setIsolate(v)}
+          />
+        </div>
 
         {/* Left overlay drawer */}
         {panel && (

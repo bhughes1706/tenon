@@ -48,6 +48,18 @@ interface ModelState {
   // Worker-carved board geometries (chunk 9 §5). Boards absent from the map fall
   // back to a flat <boxGeometry> in the viewport while the worker computes.
   meshes: Map<string, BufferGeometry>
+  // Per-board JOINT-face sub-geometries (bonus stage) — only boards with joint cuts
+  // appear. Built in evaluateGeometry from the carve result; rendered as a tinted
+  // overlay when highlightJoints is on. Disposed dispose-on-replace like `meshes`.
+  jointMeshes: Map<string, BufferGeometry>
+  // ── Joint-visualization view state (bonus stage) — ephemeral display only; never
+  // persisted, never an op, never re-triggers a carve (geometry is identical).
+  exploded: number // 0 = assembled, 1 = fully exploded (centroid-radial, §explode.ts)
+  // Isolate strength: 0 = off, → 1 = max ghost. When > 0 AND something is selected, every
+  // NON-selected board fades so the selection's joinery reads against ghosted neighbours
+  // (selection-gated — no selection means no ghosting, so nothing ever fully vanishes).
+  isolate: number
+  highlightJoints: boolean // tint mortise walls / tenon cheeks / shoulders
   snapGrid: number // inches; 0 = off (§20.5)
   scene: ViewportScene | null
   addDialogOpen: boolean
@@ -87,6 +99,10 @@ interface ModelState {
   setPanel: (panel: DesignerPanel) => void
   togglePanel: (panel: Exclude<DesignerPanel, null>) => void
   requestView: (view: ViewPreset) => void
+  setExploded: (factor: number) => void
+  setIsolate: (strength: number) => void
+  toggleIsolate: () => void
+  toggleHighlightJoints: () => void
   setSnapGrid: (grid: number) => void
   setScene: (scene: ViewportScene | null) => void
   openAddDialog: () => void
@@ -184,6 +200,10 @@ export const useModelStore = create<ModelState>((set, get) => {
     warnings: [],
     jointWarnings: [],
     meshes: new Map(),
+    jointMeshes: new Map(),
+    exploded: 0,
+    isolate: 0,
+    highlightJoints: false,
     snapGrid: 0.0625,
     scene: null,
     addDialogOpen: false,
@@ -197,6 +217,7 @@ export const useModelStore = create<ModelState>((set, get) => {
       // its meshes after this load, and free the previous model's geometries.
       evalSeq++
       disposeMeshes(get().meshes)
+      disposeMeshes(get().jointMeshes)
       set({
         modelId: id,
         loading: true,
@@ -208,6 +229,11 @@ export const useModelStore = create<ModelState>((set, get) => {
         warnings: [],
         jointWarnings: [],
         meshes: new Map(),
+        jointMeshes: new Map(),
+        // Reset the view toggles so a freshly loaded model starts assembled & opaque.
+        exploded: 0,
+        isolate: 0,
+        highlightJoints: false,
       })
       try {
         const model = await fetchModel(id)
@@ -262,17 +288,29 @@ export const useModelStore = create<ModelState>((set, get) => {
       const result = await carve(model)
       if (!result) return // superseded by the worker's coalescing, or eval failed
       const next = new Map<string, BufferGeometry>()
-      for (const b of result.boards) next.set(b.id, b.geometry)
+      const nextJoints = new Map<string, BufferGeometry>()
+      for (const b of result.boards) {
+        next.set(b.id, b.geometry)
+        if (b.highlight) nextJoints.set(b.id, b.highlight)
+      }
       // A newer evaluateGeometry started while we awaited → our meshes are stale.
       if (seq !== evalSeq) {
         disposeMeshes(next)
+        disposeMeshes(nextJoints)
         return
       }
       const prev = get().meshes
-      // Adopt the carved meshes + the joint geometry warnings (analytic codes filtered;
-      // `warnings` already carries the authoritative collision/precondition lint).
-      set({ meshes: next, jointWarnings: result.warnings.filter((w) => !ANALYTIC_CODES.has(w.code)) })
+      const prevJoints = get().jointMeshes
+      // Adopt the carved meshes + joint-face overlays + the joint geometry warnings
+      // (analytic codes filtered; `warnings` already carries the authoritative
+      // collision/precondition lint).
+      set({
+        meshes: next,
+        jointMeshes: nextJoints,
+        jointWarnings: result.warnings.filter((w) => !ANALYTIC_CODES.has(w.code)),
+      })
       disposeMeshes(prev, next) // free the geometries we just replaced
+      disposeMeshes(prevJoints, nextJoints)
     },
 
     async addBoard(board) {
@@ -349,6 +387,10 @@ export const useModelStore = create<ModelState>((set, get) => {
     setPanel: (panel) => set({ panel }),
     togglePanel: (panel) => set((s) => ({ panel: s.panel === panel ? null : panel })),
     requestView: (view) => set((s) => ({ viewRequest: { view, n: s.viewRequest.n + 1 } })),
+    setExploded: (factor) => set({ exploded: Math.min(1, Math.max(0, factor)) }),
+    setIsolate: (strength) => set({ isolate: Math.min(1, Math.max(0, strength)) }),
+    toggleIsolate: () => set((s) => ({ isolate: s.isolate > 0 ? 0 : 0.85 })),
+    toggleHighlightJoints: () => set((s) => ({ highlightJoints: !s.highlightJoints })),
     setSnapGrid: (snapGrid) => set({ snapGrid }),
     setScene: (scene) => set({ scene }),
     openAddDialog: () => set({ addDialogOpen: true, mode: 'add' }),

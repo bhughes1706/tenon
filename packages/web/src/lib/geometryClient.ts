@@ -12,6 +12,7 @@
 import * as THREE from 'three'
 import type { Model, Warning } from '@tenon/core'
 import type { EvalMesh } from '@tenon/core/eval'
+import { jointFaceMesh } from '@tenon/core/eval'
 
 export interface CarvedBoard {
   id: string
@@ -19,6 +20,12 @@ export interface CarvedBoard {
   // provenance + features are stored on geometry.userData (set in buildBoard below) for
   // chunk 11's face-pick → joint highlight. The store only keeps geometry, so userData
   // is the only channel that survives; no need for top-level struct fields.
+  //
+  // highlight is a sub-geometry of just this board's JOINT faces (mortise walls, tenon
+  // cheeks, …) for the bonus-stage joint-highlight overlay, or null when the board has no
+  // joint cuts. Built eagerly so toggling the overlay is instant; owned by the store
+  // (disposed alongside `geometry`).
+  highlight: THREE.BufferGeometry | null
 }
 
 export interface CarveResult {
@@ -46,7 +53,17 @@ function buildBoard({ id, mesh }: { id: string; mesh: EvalMesh }): CarvedBoard {
   // chunk 11's face-pick → joint highlight (docs/chunk9-design.md §5).
   geometry.userData.provenance = mesh.provenance
   geometry.userData.features = mesh.features
-  return { id, geometry }
+
+  // Joint-face overlay geometry (bonus stage): just the triangles whose feature carries a
+  // jointId. null for joint-free boards. Flat triangle soup, same layout as above.
+  const jf = jointFaceMesh(mesh)
+  let highlight: THREE.BufferGeometry | null = null
+  if (jf) {
+    highlight = new THREE.BufferGeometry()
+    highlight.setAttribute('position', new THREE.BufferAttribute(jf.positions, 3))
+    highlight.setAttribute('normal', new THREE.BufferAttribute(jf.normals, 3))
+  }
+  return { id, geometry, highlight }
 }
 
 function ensureWorker(): Worker {

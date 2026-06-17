@@ -7,8 +7,8 @@ export interface ViewportScene {
   selectionOutline: { color: { set(color: string): void } }
   hoverMaterial: { color: { set(color: string): void } }
   collisionMaterial: { color: { set(color: string): void } }
-  jointHighlight: { color: { set(color: string): void } }
-  ghostMaterial: { color: { set(color: string): void } }
+  jointHighlight: { color: { set(color: string): void }; emissive: { set(color: string): void } }
+
   measureLine: { color: { set(color: string): void } }
   snapLine: { color: { set(color: string): void } }
 }
@@ -37,7 +37,8 @@ export function syncViewportTheme(scene?: ViewportScene): void {
   target.hoverMaterial.color.set(get('--vp-hover'))
   target.collisionMaterial.color.set(get('--vp-collision'))
   target.jointHighlight.color.set(get('--vp-joint-hi'))
-  target.ghostMaterial.color.set(get('--vp-ghost'))
+  target.jointHighlight.emissive.set(get('--vp-joint-hi'))
+
   target.measureLine.color.set(get('--vp-measure'))
   target.snapLine.color.set(get('--vp-snap'))
 }

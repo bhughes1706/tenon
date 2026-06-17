@@ -31,7 +31,7 @@ export interface ViewportResources {
   snapMat: THREE.LineBasicMaterial
   collisionMat: THREE.MeshStandardMaterial
   jointMat: THREE.MeshStandardMaterial
-  ghostMat: THREE.MeshStandardMaterial
+
   scene: ViewportScene
   dispose: () => void
 }
@@ -52,9 +52,19 @@ export function createViewportResources(): ViewportResources {
   const measureMat = new THREE.LineBasicMaterial()
   const snapMat = new THREE.LineBasicMaterial()
   const collisionMat = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.5 })
-  const jointMat = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.6 })
-  const ghostMat = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.4 })
-  const background = new THREE.Color('#f4f1ec')
+  // Joint-face highlight overlay (bonus stage): an opaque amber tint drawn on the joint
+  // triangles, pushed slightly toward the camera (polygonOffset) so it sits on top of the
+  // coincident base faces without z-fighting and stays legible when ghosted. Color is
+  // theme-driven (--vp-joint-hi); a little emissive keeps it readable in shadow.
+  const jointMat = new THREE.MeshStandardMaterial({
+    roughness: 0.5,
+    metalness: 0,
+    emissiveIntensity: 0.35,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  })
+const background = new THREE.Color('#f4f1ec')
 
   // The ViewportScene shape (syncViewportTheme.ts) wants objects exposing
   // `.color.set` / `.material.color.set`; a THREE.Color satisfies `{ set }`.
@@ -65,8 +75,8 @@ export function createViewportResources(): ViewportResources {
     selectionOutline: { color: selectionMat.color },
     hoverMaterial: { color: hoverMat.color },
     collisionMaterial: { color: collisionMat.color },
-    jointHighlight: { color: jointMat.color },
-    ghostMaterial: { color: ghostMat.color },
+    jointHighlight: { color: jointMat.color, emissive: jointMat.emissive },
+
     measureLine: { color: measureMat.color },
     snapLine: { color: snapMat.color },
   }
@@ -81,7 +91,7 @@ export function createViewportResources(): ViewportResources {
     snapMat,
     collisionMat,
     jointMat,
-    ghostMat,
+
     scene,
     // Not called in normal operation — GPU cleanup relies on WebGL context teardown
     // when the Canvas unmounts (see Viewport.tsx effect comment). Kept for parity
@@ -89,7 +99,7 @@ export function createViewportResources(): ViewportResources {
     dispose() {
       majorGeo.dispose()
       minorGeo.dispose()
-      for (const m of [majorMat, minorMat, selectionMat, hoverMat, measureMat, snapMat, collisionMat, jointMat, ghostMat]) {
+      for (const m of [majorMat, minorMat, selectionMat, hoverMat, measureMat, snapMat, collisionMat, jointMat]) {
         m.dispose()
       }
     },

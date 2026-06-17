@@ -9,6 +9,7 @@ import { setViewportScene, syncViewportTheme } from '../lib/syncViewportTheme.js
 import { speciesColor } from '../lib/speciesColors.js'
 import { formatInchesMark } from '../lib/fraction.js'
 import { modelBounds } from './bounds.js'
+import { computeExplodeOffsets } from './explode.js'
 import { solveSnap, type AABB, type SnapGuide } from './snapping.js'
 import { createViewportResources, type ViewportResources } from './viewportResources.js'
 
@@ -32,6 +33,11 @@ const VIEW_DIRS: Record<'iso' | 'front' | 'top', [number, number, number]> = {
 function BoardMesh({
   board,
   carved,
+  highlight,
+  showHighlight,
+  ghosted,
+  ghostOpacity,
+  offset,
   selected,
   hovered,
   resources,
@@ -41,6 +47,15 @@ function BoardMesh({
 }: {
   board: Board
   carved: THREE.BufferGeometry | undefined
+  // Joint-face overlay geometry for this board (bonus stage), or undefined if none.
+  highlight: THREE.BufferGeometry | undefined
+  showHighlight: boolean
+  // Isolate mode (bonus stage): this board is a non-selected neighbour that should fade
+  // so the selection reads against it; ghostOpacity is how faint.
+  ghosted: boolean
+  ghostOpacity: number
+  // Exploded-view world offset added to the board's position (centroid-radial).
+  offset: [number, number, number]
   selected: boolean
   hovered: boolean
   resources: ViewportResources
@@ -49,6 +64,7 @@ function BoardMesh({
   mode: string
 }) {
   const [rx, ry, rz] = board.transform.rot
+  const [px, py, pz] = board.transform.pos
   const color = useMemo(() => speciesColor(board.species), [board.species])
   // Flat box fallback while the worker carves (or for joint-free boards). Not manually
   // disposed: R3F tears down the WebGL context on Canvas unmount (freeing the buffers),
@@ -65,7 +81,11 @@ function BoardMesh({
   const outlineMat = selected ? resources.selectionMat : resources.hoverMat
 
   return (
-    <group ref={setRef} position={board.transform.pos} rotation={[deg2rad(rx), deg2rad(ry), deg2rad(rz)]}>
+    <group
+      ref={setRef}
+      position={[px + offset[0], py + offset[1], pz + offset[2]]}
+      rotation={[deg2rad(rx), deg2rad(ry), deg2rad(rz)]}
+    >
       <mesh
         castShadow
         receiveShadow
@@ -81,8 +101,30 @@ function BoardMesh({
         }}
       >
         <primitive object={geom} attach="geometry" />
-        <meshStandardMaterial color={color} roughness={0.7} metalness={0} />
+        {/* Isolate mode just fades the whole non-selected board. Two non-obvious bits:
+            (1) the `key` remounts the material when ghosted flips — toggling `transparent`
+            on an already-rendered material doesn't re-enable blending in R3F (an early
+            "clipping" symptom was just transparency never turning on). (2) the ghost sets
+            depthWrite:false. A transparent mesh that writes depth z-fights its own faces
+            (drawn in buffer order, never depth-sorted within a mesh) and the coincident
+            solid board — that was the real cause of the tenon rendering at the wrong height.
+            depthTest stays on, so the opaque selected board still correctly occludes the
+            ghost behind it. */}
+        <meshStandardMaterial
+          key={ghosted ? 'ghost' : 'solid'}
+          color={color}
+          roughness={0.7}
+          metalness={0}
+          transparent={ghosted}
+          opacity={ghosted ? ghostOpacity : 1}
+          depthWrite={!ghosted}
+        />
       </mesh>
+      {/* Joint-face overlay (mortise walls / tenon cheeks / shoulders) — shared amber
+          material with polygonOffset, never pickable. */}
+      {showHighlight && highlight && (
+        <mesh geometry={highlight} material={resources.jointMat} raycast={voidRaycast} />
+      )}
       {(selected || hovered) && (
         <lineSegments raycast={voidRaycast}>
           <edgesGeometry args={[geom]} />
@@ -135,11 +177,25 @@ function SceneContents({
   const size = useThree((s) => s.size)
   const model = useModelStore((s) => s.model)
   const meshes = useModelStore((s) => s.meshes)
+  const jointMeshes = useModelStore((s) => s.jointMeshes)
   const selection = useModelStore((s) => s.selection)
   const hovered = useModelStore((s) => s.hovered)
   const mode = useModelStore((s) => s.mode)
   const gizmoMode = useModelStore((s) => s.gizmoMode)
+  const exploded = useModelStore((s) => s.exploded)
+  const isolate = useModelStore((s) => s.isolate)
+  const highlightJoints = useModelStore((s) => s.highlightJoints)
   const dispatch = useModelStore((s) => s.dispatch)
+
+  // Exploded-view offsets (centroid-radial, axis-snapped). Empty map when assembled.
+  const explodeOffsets = useMemo(() => computeExplodeOffsets(model, exploded), [model, exploded])
+  const ZERO_OFFSET: [number, number, number] = [0, 0, 0]
+
+  // Isolate mode: fade non-selected boards (selection-gated, so nothing fully vanishes).
+  // Linear so the slider reads directly: isolate 0.85 → 0.15 opacity (clearly a ghost),
+  // isolate 1 → fully hidden (joint highlights still show — they're a separate solid mesh).
+  const isolateActive = isolate > 0 && selection.length > 0
+  const ghostOpacity = 1 - isolate
 
   // Re-carve geometry on every model change (load/optimistic/undo/redo/SSE). The
   // worker coalesces bursts and the store drops stale results; boards fall back to a
@@ -325,6 +381,11 @@ function SceneContents({
           key={b.id}
           board={b}
           carved={meshes.get(b.id)}
+          highlight={jointMeshes.get(b.id)}
+          showHighlight={highlightJoints}
+          ghosted={isolateActive && !selection.includes(b.id)}
+          ghostOpacity={ghostOpacity}
+          offset={explodeOffsets.get(b.id) ?? ZERO_OFFSET}
           selected={selection.includes(b.id)}
           hovered={hovered === b.id}
           resources={resources}
@@ -385,7 +446,9 @@ function SceneContents({
         dampingFactor={0.12}
         mouseButtons={{ LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: undefined as unknown as THREE.MOUSE }}
       />
-      {gizmoTarget && mode === 'select' && (
+      {/* Gizmo is hidden while exploded — editing a board shown at a diagrammatic offset
+          (its real transform is elsewhere) would be misleading. */}
+      {gizmoTarget && mode === 'select' && exploded === 0 && (
         <TransformControls
           object={gizmoTarget}
           mode={gizmoMode}

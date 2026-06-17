@@ -72,6 +72,22 @@ export function registerViewportCommands(): void {
   registry.register({ id: 'view_iso', label: 'Isometric View', icon: 'Box', group: 'View', contexts: ['empty'], when: inDesigner, run: () => store().requestView('iso') })
   registry.register({ id: 'view_front', label: 'Front View', icon: 'Square', group: 'View', contexts: ['empty'], when: inDesigner, run: () => store().requestView('front') })
   registry.register({ id: 'view_top', label: 'Top View', icon: 'Square', group: 'View', contexts: ['empty'], when: inDesigner, run: () => store().requestView('top') })
+
+  // Joint visualization (chunk 9 bonus stage). Explode cycles assembled → half → full
+  // → assembled so it's reachable from the palette without a slider.
+  registry.register({ id: 'toggle_isolate', label: 'Toggle Isolate Selected', icon: 'Focus', group: 'View', when: inDesigner, run: () => store().toggleIsolate() })
+  registry.register({ id: 'toggle_joint_highlight', label: 'Toggle Joint Highlight', icon: 'Highlighter', group: 'View', when: inDesigner, run: () => store().toggleHighlightJoints() })
+  registry.register({
+    id: 'explode',
+    label: 'Explode View',
+    icon: 'Boxes',
+    group: 'View',
+    when: inDesigner,
+    run: () => {
+      const e = store().exploded
+      store().setExploded(e === 0 ? 0.5 : e < 1 ? 1 : 0)
+    },
+  })
 }
 
 registerViewportCommands()
