@@ -1,8 +1,37 @@
 # Tenon — Agent Handoff Document
 
-**Date:** 2026-06-16 (chunk 9 COMPLETE — all 5 stages done & committed; chunk 10 = cut list is next)  
+**Date:** 2026-06-17 (chunk 10 COMPLETE — cut list engine + REST route + web panel; chunk 11 = joint dialog / lint-resolve is next)  
 **Repo:** https://github.com/bhughes1706/tenon  
 **Spec:** `/Users/Brian/Downloads/tenon-spec-v0.4.md` (always load this — it is the ground truth)
+
+---
+
+## ✅ CHUNK 10 — COMPLETE (2026-06-17)
+
+Cut list, **minimal-engine scope** (owner's call): §7 rules — rough stock, board feet / ft²,
+waste factor, species cost, machining notes, grouping. **Read `docs/chunk10-design.md`** before
+extending it. **Deferred:** glue-up strip math + panel movement auto-sizing (spec §15), and the
+`get_cutlist` MCP tool (lands with `get_model`/`apply_model_ops`, which are still NOT registered
+in `mcp/server.ts` despite older notes — only the 8 jobs/photos tools are).
+
+**One-line architecture:** `generateCutlist(model, opts)` is **WASM-free on base `@tenon/core`**
+(`src/cutlist/`), so the **same fn runs client-side in the live panel AND server-side in the REST
+route** — machining notes are pure param/dim math (no Manifold, no overlap), preserving the §6
+"server bundle 0 manifold refs" invariant (re-verified: 0).
+
+**Files:** core `src/cutlist/{format,rough,notes,cutlist,index}.ts` (+ exported from `index.ts`);
+server `routes/models.ts` (real `/:id/cutlist` route + `loadCutlistOpts()`, replaced the 501 stub);
+web `lib/cutlist.ts` (`buildCutlistOpts`/`cutlistToCsv`/`cutlistToHtml`/`downloadCsv`/`printCutlist`)
++ `CutlistPanel` in `ui/DesignerShell.tsx` (the `≣` rail button / `toggle_cutlist` command already
+opened the panel — unchanged). **Counts:** core **140** (+20), web **77** (+7), server **16**.
+
+**Gotcha for the next agent:** `notes.ts` **duplicates** the JointFn default formulas from
+`src/eval/joints/*` (it must stay WASM-free, so it can't import them). If you change a joint
+default there, update the matching branch in `notes.ts`. Note values needing the real overlap
+(tenon length, fastener count) are approximated — shop-accurate, not carve-exact (see design doc).
+
+Verified: full suites green; server + web bundle invariants hold; live curl smoke test of the
+route returned correct grouping/notes/cost (total $146.50 fixture) — recipe in `docs/chunk10-design.md`.
 
 ---
 
@@ -303,8 +332,8 @@ This does not block chunk 9. It can be applied as a one-commit patch at any poin
 | ~~7~~ | ~~Viewport: R3F scene, orbit, board render, transform gizmo, Select/Add/Measure modes~~ | **DONE** |
 | ~~8~~ | ~~Snapping (face/edge/end magnetism), collision broadphase, outliner tree, context menu~~ | **DONE** |
 | ~~9~~ | ~~Manifold WASM geometry evaluator in web worker; joint evaluation pipeline; housing/rabbet/half-lap/bridle/butt/M&T (box/dovetail deferred)~~ | **DONE** |
-| **10** | **Cut list (board → rough stock → waste factors), species cost, materials summary** | 9 — **NEXT CHUNK** |
-| 11 | Joint dialog + lint resolve flow; `render_view` MCP tool | 9 |
+| ~~10~~ | ~~Cut list (board → rough stock → waste factors), species cost, materials summary~~ | **DONE** (minimal-engine scope; glue-up/movement + `get_cutlist` MCP deferred) |
+| **11** | **Joint dialog + lint resolve flow; `render_view` MCP tool** | 9 — **NEXT CHUNK** |
 | 12 | Photo capture tab (camera API, phone-first) | 6 |
 | 13 | Bid engine (materials + hardware + labor + overhead + margin), `estimate_bid` MCP tool | 10 |
 | 14–18 | Settings screen full impl, 3D print export (3MF), co-designer polish, doc migrations | various |

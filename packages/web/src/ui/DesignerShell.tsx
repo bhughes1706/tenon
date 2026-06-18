@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   MousePointer2, Plus, Ruler, Layers, AlertTriangle, List,
@@ -6,7 +6,10 @@ import {
   Highlighter,
 } from 'lucide-react'
 import type { Board } from '@tenon/core'
+import { generateCutlist, fmtFraction } from '@tenon/core'
 import { useAppCtx } from '../lib/AppContext.js'
+import { useSpecies } from '../lib/speciesApi.js'
+import { buildCutlistOpts, cutlistToCsv, downloadCsv, printCutlist } from '../lib/cutlist.js'
 import { useModelStore, type DesignerPanel } from '../lib/modelStore.js'
 import { liveMembers } from '../lib/groups.js'
 import { CommandPalette } from './CommandPalette.js'
@@ -323,11 +326,7 @@ export function DesignerShell() {
             <div style={{ overflowY: 'auto', flex: 1, padding: 'var(--sp-2)' }}>
               {panel === 'outliner' && <Outliner />}
               {panel === 'lint' && <LintList />}
-              {panel === 'cutlist' && (
-                <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-faint)', padding: 'var(--sp-2)' }}>
-                  Cut list appears here in chunk 15
-                </span>
-              )}
+              {panel === 'cutlist' && <CutlistPanel />}
             </div>
           </div>
         )}
@@ -533,6 +532,92 @@ function LintList() {
           <b>{w.code}</b> — {w.msg}
         </div>
       ))}
+    </div>
+  )
+}
+
+const cutlistBtn: React.CSSProperties = {
+  flex: 1, border: '1px solid var(--border)', cursor: 'pointer',
+  background: 'var(--surface-sunken)', color: 'var(--text-muted)',
+  padding: '4px var(--sp-2)', borderRadius: 'var(--radius-s)',
+  fontSize: 'var(--text-xs)', fontFamily: 'inherit',
+}
+
+// §7 cut list — computed live (client-side) from the optimistic model via core's
+// generateCutlist (WASM-free). The server route runs the same fn for MCP/bids.
+function CutlistPanel() {
+  const model = useModelStore((s) => s.model)
+  const species = useSpecies()
+  const ctx = useAppCtx()
+  const precision = ctx.settings?.fraction_precision ?? 16
+
+  const result = useMemo(
+    () => (model ? generateCutlist(model, buildCutlistOpts(species, ctx.settings ?? null)) : null),
+    [model, species, ctx.settings],
+  )
+
+  if (!model || !result || result.rows.length === 0) {
+    return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-faint)', padding: 'var(--sp-2)' }}>No boards yet — the cut list is empty.</span>
+  }
+
+  const fr = (n: number) => fmtFraction(n, precision)
+  const cell: React.CSSProperties = { padding: '3px 4px', borderBottom: '1px solid var(--border)', verticalAlign: 'top' }
+  const num: React.CSSProperties = { ...cell, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }
+  const modelName = model.name || 'model'
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)', fontSize: 'var(--text-xs)' }}>
+      <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
+        <button onClick={() => downloadCsv(`${modelName}-cutlist.csv`, cutlistToCsv(result, precision))} style={cutlistBtn}>Export CSV</button>
+        <button onClick={() => printCutlist(result, modelName, precision)} style={cutlistBtn}>Print</button>
+      </div>
+
+      <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+        <thead>
+          <tr style={{ color: 'var(--text-faint)', textAlign: 'left' }}>
+            <th style={num}>Qty</th><th style={cell}>Finished · species · notes</th><th style={cell}>Stock</th><th style={num}>Bd.Ft / ft²</th>
+          </tr>
+        </thead>
+        <tbody>
+          {result.rows.map((r, i) => (
+            <tr key={i}>
+              <td style={num}>{r.qty}</td>
+              <td style={cell}>
+                <div>{fr(r.finished.l)} × {fr(r.finished.w)} × {fr(r.finished.t)}</div>
+                <div style={{ color: 'var(--text-faint)' }}>{r.speciesName}</div>
+                {r.notes.length > 0 && <div style={{ color: 'var(--accent)' }}>{r.notes.join('; ')}</div>}
+              </td>
+              <td style={cell}>{r.kind === 'sheet' ? 'sheet' : r.thicknessLabel}</td>
+              <td style={num}>{r.kind === 'sheet' ? `${r.areaFt2} ft²` : r.boardFeet}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div style={{ borderTop: '1px solid var(--border-strong)', paddingTop: 'var(--sp-2)' }}>
+        <div style={{ fontWeight: 600, marginBottom: 2 }}>Materials</div>
+        {result.materials.map((m) => (
+          <div key={m.species} style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--sp-2)' }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {m.speciesName}{' '}
+              <span style={{ color: 'var(--text-faint)' }}>
+                {m.kind === 'sheet' ? `${m.sheets} sheet(s)` : `${m.grossBoardFeet} bf`} (+{Math.round(m.wasteFactor * 100)}%)
+              </span>
+            </span>
+            <span style={{ fontVariantNumeric: 'tabular-nums' }}>${m.cost.toFixed(2)}</span>
+          </div>
+        ))}
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, marginTop: 4, borderTop: '1px solid var(--border)', paddingTop: 4 }}>
+          <span>Total</span>
+          <span style={{ fontVariantNumeric: 'tabular-nums' }}>${result.totalCost.toFixed(2)}</span>
+        </div>
+      </div>
+
+      {result.warnings.length > 0 && (
+        <div style={{ color: 'var(--warn)' }}>
+          {result.warnings.map((w, i) => <div key={i}>{w.msg}</div>)}
+        </div>
+      )}
     </div>
   )
 }

@@ -1,8 +1,8 @@
 import { Router } from 'express'
 import { getDb } from '../db.js'
 import { emitSse } from '../sse.js'
-import { makeModelId, ModelSchema, validateOps, recomputeWarnings, ApplyOpsRequestSchema } from '@tenon/core'
-import type { Model, OpResult, Warning } from '@tenon/core'
+import { makeModelId, ModelSchema, validateOps, recomputeWarnings, ApplyOpsRequestSchema, generateCutlist, SETTINGS_DEFAULTS } from '@tenon/core'
+import type { Model, OpResult, Warning, CutlistOpts, CutlistSpecies } from '@tenon/core'
 import { applyOps } from '../lib/applyOps.js'
 
 const router: Router = Router()
@@ -158,11 +158,49 @@ router.post('/:id/ops', (req, res) => {
   res.json({ ok: true, rev: newRev, applied, warnings, errors: [] } satisfies OpResult)
 })
 
-// GET /api/models/:id/cutlist — stub until chunk 15
+// GET /api/models/:id/cutlist — §7 cut list (rows + per-species materials + total cost).
+// The same core generateCutlist() backs the live web panel; here it runs server-side for
+// MCP/bid/headless use. Species cost + kind come from the species table, waste factors +
+// fraction precision from settings.
 router.get('/:id/cutlist', (req, res) => {
-  const row = getDb().prepare('SELECT id FROM models WHERE id = ?').get(req.params.id)
-  if (!row) return res.status(404).json({ error: 'not found' })
-  res.status(501).json({ error: 'cutlist engine not yet implemented (chunk 15)' })
+  const model = loadModel(req.params.id)
+  if (!model) return res.status(404).json({ error: 'not found' })
+  res.json(generateCutlist(model, loadCutlistOpts()))
 })
+
+// Build CutlistOpts from the species table + settings (with core defaults as fallback).
+function loadCutlistOpts(): CutlistOpts {
+  const db = getDb()
+
+  const species: Record<string, CutlistSpecies> = {}
+  const rows = db.prepare('SELECT id, common_name, kind, cost_bf FROM species').all() as Array<{
+    id: string
+    common_name: string
+    kind: string
+    cost_bf: number
+  }>
+  for (const r of rows) {
+    species[r.id] = { kind: r.kind === 'sheet' ? 'sheet' : 'solid', cost_bf: r.cost_bf, common_name: r.common_name }
+  }
+
+  const settings = db.prepare('SELECT key, value FROM settings').all() as { key: string; value: string }[]
+  const num = (key: string, fallback: number): number => {
+    const row = settings.find((s) => s.key === key)
+    if (!row) return fallback
+    try {
+      const v = JSON.parse(row.value) as unknown
+      return typeof v === 'number' ? v : fallback
+    } catch {
+      return fallback
+    }
+  }
+
+  return {
+    species,
+    wasteFactorSolid: num('waste_factor_solid', SETTINGS_DEFAULTS.waste_factor_solid),
+    wasteFactorSheet: num('waste_factor_sheet', SETTINGS_DEFAULTS.waste_factor_sheet),
+    fractionPrecision: num('fraction_precision', SETTINGS_DEFAULTS.fraction_precision),
+  }
+}
 
 export default router
