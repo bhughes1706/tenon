@@ -1,8 +1,102 @@
 # Tenon — Agent Handoff Document
 
-**Date:** 2026-06-17 (chunk 10 COMPLETE — cut list engine + REST route + web panel; chunk 11 = joint dialog / lint-resolve is next)  
+**Date:** 2026-07-02 (off-axis geometry COMPLETE — see below; chunk 11 = joint dialog / lint-resolve is next)  
 **Repo:** https://github.com/bhughes1706/tenon  
 **Spec:** `/Users/Brian/Downloads/tenon-spec-v0.4.md` (always load this — it is the ground truth)
+
+---
+
+## ✅ OFF-AXIS GEOMETRY — COMPLETE (2026-07-02)
+
+The "v1 is 90°-only" restriction is lifted. Boards/assemblies may now sit at ANY world
+rotation; the analytic stack no longer assumes world-axis alignment anywhere:
+
+1. **Collision is exact at any angle.** `narrowphase(a, b)` (`core/geometry/collision.ts`)
+   now takes Boards: axis-aligned pairs keep the cheap exact AABB-volume path; any other
+   pair uses **`obbOverlap()` — exact OBB-OBB SAT** (15 axes, in `aabb.ts`). The old
+   "off-axis → skip warning + console.warn" hole is gone. SAT `depth³` stands in for
+   volume (ranking only; `intersects` is the load-bearing bit).
+2. **Joints carve in the PAIR FRAME (board a's local frame), not world.** New primitives
+   in `aabb.ts`: `matMul`, `isSignedPermutation`, `reframeBox`, `pairFrame`,
+   `isMutuallyAligned`. `pairSolids(a, b)` (`eval/joints/util.ts`) builds the BoardSolids
+   a JointFn consumes — a's box exact in its own frame, b's reframed into it.
+   **The six JointFn recipes are byte-for-byte unchanged** — only the frame their inputs
+   are expressed in changed (golden snapshots passed WITHOUT regeneration). `BoardSolid`
+   gained a `frame` field; `toLocal()` reframes pair-frame cutters into each target
+   board's local frame via `reframeBox`.
+3. **The alignment requirement is now RELATIVE, not absolute:** a joint requires the two
+   boards be square *to each other* (`Ra^T·Rb` a signed permutation), at any assembly
+   orientation. A genuinely compound-angle pair is REJECTED by `checkJointPrecondition`
+   with a teaching reason ("not square to each other…") — add_joint hard-fails, an
+   existing joint skips the carve + warns. Never carved wrong.
+4. **`JOINT_PRECONDITION_FAILED` is now persistent lint.** It moved from validateOps'
+   transient step-3 soft-warn (which vanished on the next unrelated op) into
+   `recomputeWarnings()`, which re-derives EVERY enabled joint's precondition on every
+   model set (client optimistic + server post-commit). validateOps step 3 keeps only the
+   hard add_joint gate and now always returns `warnings: []`. The store's
+   `ANALYTIC_CODES` filter already dedupes the worker's copy — no UI change needed.
+
+**Tests added:** SAT true/false-positive cases (Monte-Carlo verified fixtures) in
+`collision.test.ts`; rotated-assembly M&T + half-lap carve-exactness and compound-angle
+rejection in `joints.property.test.ts`; relative-alignment accept/reject in
+`preconditions.test.ts`; persistent-lint cases in `collision.test.ts` + `validators.test.ts`.
+Counts: core **150** (+10). Web/server suites + both bundle invariants re-verified green
+(server 0 manifold refs; web main bundle 0 manifold/0 BufferGeometry, 408 KB).
+
+**Still true:** cutters are axis-aligned prisms *in the pair frame* — compound-angle
+JOINERY (out-of-square pairs) is unsupported and cleanly rejected. `solveSnap` magnetism
+still uses world AABBs of neighbours, so magnetic snap targets on rotated boards are
+approximate (cosmetic; Alt suspends). The gizmo's 15° `rotationSnap` and the Inspector's
+15°-step Rot° inputs are now fully supported inputs, not a lint hole.
+
+---
+
+## ✅ REMAINING FIXES — DONE (2026-07-02)
+
+All 6 items from the 2026-07-02 review are fixed, typechecked, and tested green
+(core 157/158 + 1 skipped bench — 7 new locked-enforcement cases in
+`validators.test.ts`, server 16, web 77; server bundle still 0 manifold refs; web
+build still succeeds with the PWA plugin). None touched the geometry stack.
+
+1. **Model `name` dual-source drift — fixed.** `routes/models.ts`: the `/ops` route now
+   also writes the `name` column when `set_model_meta` changes `doc.name` (compares
+   `model.name !== updated.name` before the CAS UPDATE); `PATCH /:id` now also rewrites
+   `doc.name` (+ `doc.meta.updated_at`) when `name` is provided, so list pages and the
+   designer never disagree.
+2. **PWA API caching — fixed.** `vite.config.ts` workbox `urlPattern` is now
+   `({ url }) => url.pathname.startsWith('/api/') && url.pathname !== '/api/events'` —
+   matches the pathname (not the dead full-URL regex) and excludes the SSE stream.
+3. **`locked` is now enforced**, not just Inspector-cosmetic. `validateOps` (`SimState`
+   gained a `locked` map): `update_board`/`transform_board`/`remove_board` reject on a
+   locked board, except an `update_board` patch of exactly `{locked: false}` (unlocking).
+   Web: `Viewport.tsx` withholds the gizmo target for a locked selection (no drag can
+   even start); `modelStore.removeSelected` drops locked ids from the batch (a single
+   locked `remove_board` would otherwise fail the WHOLE batch); keyboard ⌫ goes through
+   `removeSelected` so it's covered for free. `duplicateSelected` was already safe —
+   copies always start `locked: false` and never mutate the locked source.
+4. **SSE reliability — all 4 landed.** (a) `sse.ts` writes a `: heartbeat\n\n` comment
+   every 30s per client, cleared on `close`. (b) `modelStore.connectEvents` tracks
+   `hadError` across an `error` event and refetches the model on the next `open` (the
+   *first* open is a no-op, only a reconnect triggers it). (c) `log_note`/`log_time` in
+   `mcp/server.ts` now `emitSse('job_changed', { id: job_id, event: 'note_added' | 'time_logged' })`.
+   (d) `JobDetail.tsx` now opens its own `EventSource('/api/events')` and refetches via
+   `load()` on `photo_added`/`job_changed` matching its job id.
+5. **deploy.sh stale comment — fixed.** PORT=3001, DATA_DIR=/home/bhughes/data, and the
+   funnel line now reads `tailscale funnel --bg --https=8443 3001` (scoped off port 443,
+   which is the calorie app — gotcha #6) with a note that the PWA itself stays
+   tailnet-only, no funnel.
+6. **Smaller fixes — all 3 landed.** `server/index.ts`: unknown `/api/*` now 404s JSON
+   via an `app.use('/api', ...)` catch-all placed before the SPA fallback; `DATA_DIR`
+   with no env var now defaults to `~/.tenon/data` (was resolving inside the repo at
+   `packages/data/` via `__dirname` off `dist/`). `web/lib/cutlist.ts`
+   `buildCutlistOpts` fallbacks now read `SETTINGS_DEFAULTS.*` instead of duplicating
+   the literals `0.2`/`0.1`/`16`.
+
+UX gaps (bigger, need owner input on placement, but all are "route exists, button
+doesn't" — still open): no create-model UI anywhere (ModelsPage empty state is
+misleading); no photo upload/delete in the web UI; board `qty`/`kind`/edge-grooves not
+editable (cut list's sheet + qty paths unreachable); waste factors + default species
+missing from Settings.
 
 ---
 
@@ -56,8 +150,8 @@ Chunk 9 (geometry evaluator) shipped in the 5 stages of `docs/chunk9-design.md` 
 ### Verify current state
 ```bash
 corepack pnpm --filter @tenon/core build      # build first — web/server depend on dist
-corepack pnpm --filter @tenon/core typecheck && corepack pnpm --filter @tenon/core test     # 117 pass (+1 perf.bench skipped)
-corepack pnpm --filter @tenon/web typecheck   && corepack pnpm --filter @tenon/web test      # 65 pass
+corepack pnpm --filter @tenon/core typecheck && corepack pnpm --filter @tenon/core test     # 150 pass (+1 perf.bench skipped)
+corepack pnpm --filter @tenon/web typecheck   && corepack pnpm --filter @tenon/web test      # 77 pass
 corepack pnpm --filter @tenon/server typecheck && corepack pnpm --filter @tenon/server test  # 16 pass
 corepack pnpm --filter @tenon/server build && grep -ci manifold packages/server/dist/index.js  # → 0 (§6 invariant)
 corepack pnpm --filter @tenon/web build        # prod build: emits geometry.worker + manifold.wasm assets; main bundle stays 402 KB (no THREE/WASM)
@@ -173,9 +267,9 @@ DEPLOYMENT.md      — first-time mini-PC setup reference
 corepack pnpm --filter @tenon/core typecheck
 corepack pnpm --filter @tenon/server typecheck
 corepack pnpm --filter @tenon/web typecheck
-corepack pnpm --filter @tenon/core test      # 46 tests
+corepack pnpm --filter @tenon/core test      # 151 tests (150 pass + 1 perf.bench skipped)
 corepack pnpm --filter @tenon/server test    # 16 tests
-corepack pnpm --filter @tenon/web test       # 73 tests (jsdom)
+corepack pnpm --filter @tenon/web test       # 77 tests (jsdom)
 ./deploy/deploy.sh                           # full build + deploy to mini-canterbury
 ```
 
@@ -211,8 +305,8 @@ Core has **no DOM, no Node-only APIs** — runs identically in browser worker an
 
 **MCP server** (`src/mcp/server.ts`):
 - Transport: Streamable HTTP (`@modelcontextprotocol/sdk`)
-- Tools implemented: `list_jobs`, `get_job`, `create_job`, `update_job`, `log_note`, `log_time`, `list_photos`, `get_photo` (returns base64 thumbnail), `apply_model_ops`, `get_model`
-- `apply_model_ops` runs `validateOp()` from core then persists via `src/lib/applyOps.ts`; emits SSE `model_changed` after commit
+- Tools registered (8 total — jobs/photos only): `list_jobs`, `get_job`, `create_job`, `update_job`, `log_note`, `log_time`, `get_photos`, `upload_photo`
+- **Model tools (`get_model`, `apply_model_ops`, `get_cutlist`) are NOT yet registered** — planned for chunk 13 (§11 Phase 3). The REST pipeline (`/api/models/:id/ops`) is fully built and tested; it just has no MCP surface yet.
 - All writes appended to `~/data/mcp-audit.log` (pino NDJSON)
 - Rate limited: 60 req/min global cap (Tailscale proxies to localhost so req.ip is always 127.0.0.1)
 - Auth: `src/middleware/bearerAuth.ts` — reads `Authorization: Bearer <token>`, compares to `MCP_BEARER_TOKEN` env var with timing-safe compare
@@ -272,7 +366,7 @@ Core has **no DOM, no Node-only APIs** — runs identically in browser worker an
 
 **PWA:** VitePWA, `autoUpdate`, service worker precaches all assets, `NetworkFirst` for `/api/*` with 10s timeout
 
-**Tests:** 73 tests — `theme.test.ts` (19), `useSettings.test.ts` (8), plus chunk 7: `fraction.test.ts` (12), `clientOps.test.ts` (10 — applyOpsLocal + invertOps round-trips), `speciesColors.test.ts` (3); chunk 8: `snapping.test.ts` (9), `collision.test.ts` (8), `registry.test.ts` (4 — `forContext` coverage added in peer review)
+**Tests:** 77 tests — `theme.test.ts` (19), `useSettings.test.ts` (8), plus chunk 7: `fraction.test.ts` (12), `clientOps.test.ts` (10 — applyOpsLocal + invertOps round-trips), `speciesColors.test.ts` (3); chunk 8: `snapping.test.ts` (9), `collision.test.ts` (8), `registry.test.ts` (4 — `forContext` coverage added in peer review); chunk 9 bonus: `explode.test.ts` (5); chunk 10: `cutlist.test.ts` (7 — buildCutlistOpts, cutlistToCsv, cutlistToHtml)
 
 ### `@tenon/web` — Chunk 7 (viewport)
 

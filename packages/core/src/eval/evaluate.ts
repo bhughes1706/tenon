@@ -13,12 +13,12 @@ import type { Board } from '../board.js'
 import type { Model } from '../model.js'
 import type { Warning } from '../common.js'
 import { WarningCode } from '../common.js'
-import { worldAABB, worldOBB } from '../geometry/aabb.js'
 import { checkJointPrecondition, CONTACT_TOL } from '../geometry/preconditions.js'
-import type { BoardSolid, CutFeature, CutterBox, EvalCache, EvalCtx, EvalMesh, EvalResult } from './types.js'
+import type { CutFeature, CutterBox, EvalCache, EvalCtx, EvalMesh, EvalResult } from './types.js'
 import { baseSolid, buildCutter, edgeGrooveCutters, overcutToBoard } from './solids.js'
 import { toEvalMesh } from './mesh.js'
 import { JOINT_FNS } from './joints/index.js'
+import { pairSolids } from './joints/util.js'
 
 type ManifoldStatic = Parameters<typeof buildCutter>[0]
 
@@ -43,13 +43,9 @@ export async function evaluate(model: Model, cache?: EvalCache): Promise<EvalRes
   const { Manifold } = await getManifold()
   const warnings: Warning[] = []
 
-  // 1. Pure-data board solids (aabb + obb in world; no WASM) for the JointFns.
-  const solids = new Map<string, BoardSolid>()
-  for (const board of model.boards) {
-    solids.set(board.id, { board, aabb: worldAABB(board), obb: worldOBB(board) })
-  }
+  const boardById = new Map(model.boards.map((b) => [b.id, b]))
 
-  // 2. Seed every board's cutter list with its edge grooves (board features, §3.4),
+  // 1. Seed every board's cutter list with its edge grooves (board features, §3.4),
   //    then add the joint cutters from each enabled joint's JointFn.
   const cuttersByBoard = new Map<string, CutterBox[]>()
   for (const board of model.boards) cuttersByBoard.set(board.id, edgeGrooveCutters(board))
@@ -57,9 +53,9 @@ export async function evaluate(model: Model, cache?: EvalCache): Promise<EvalRes
   const ctx: EvalCtx = { model, tol: CONTACT_TOL }
   for (const joint of model.joints) {
     if (joint.enabled === false) continue
-    const a = solids.get(joint.a)
-    const b = solids.get(joint.b)
-    if (!a || !b) continue // dangling reference; ignore
+    const boardA = boardById.get(joint.a)
+    const boardB = boardById.get(joint.b)
+    if (!boardA || !boardB) continue // dangling reference; ignore
 
     const fn = JOINT_FNS[joint.type]
     if (!fn) {
@@ -74,7 +70,9 @@ export async function evaluate(model: Model, cache?: EvalCache): Promise<EvalRes
 
     // Re-check the precondition against current positions (a move may have invalidated an
     // existing joint, §2.4 #3). Skip the carve + warn rather than emit broken geometry.
-    const pre = checkJointPrecondition(joint.type, a.board, b.board, joint.params)
+    // This also rejects compound-angle pairs (not square to each other), which the
+    // pair-frame recipes below cannot carve exactly.
+    const pre = checkJointPrecondition(joint.type, boardA, boardB, joint.params)
     if (!pre.ok) {
       warnings.push({
         code: WarningCode.JOINT_PRECONDITION_FAILED,
@@ -85,7 +83,11 @@ export async function evaluate(model: Model, cache?: EvalCache): Promise<EvalRes
       continue
     }
 
-    const set = fn(a, b, joint.params, ctx)
+    // 2. Per-joint PAIR-frame solids (board a's local frame): exact whenever the two
+    //    boards are square to each other, regardless of the assembly's world rotation
+    //    (§Angle readiness — the precondition above guarantees `aligned`).
+    const pair = pairSolids(boardA, boardB)
+    const set = fn(pair.a, pair.b, joint.params, ctx)
     stamp(cuttersByBoard.get(joint.a), set.a, joint.id)
     stamp(cuttersByBoard.get(joint.b), set.b, joint.id)
     for (const w of set.warnings) {

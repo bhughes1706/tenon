@@ -28,7 +28,10 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,ico,png,svg,wasm}'],
         runtimeCaching: [
           {
-            urlPattern: /^\/api\//,
+            // workbox matches urlPattern against the FULL URL (e.g. "https://host/api/x"),
+            // not a path — a bare /^\/api\// regex never matches and this rule was dead.
+            // Exclude /api/events: it's the SSE stream and must never be cached/handled.
+            urlPattern: ({ url }) => url.pathname.startsWith('/api/') && url.pathname !== '/api/events',
             handler: 'NetworkFirst',
             options: { cacheName: 'api-cache', networkTimeoutSeconds: 10 }
           }

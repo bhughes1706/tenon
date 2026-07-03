@@ -86,6 +86,13 @@ echo "==> Deployed $TS"
 # ---------------------------------------------------------------------------
 # First-time setup on mini-canterbury (run once manually):
 #
+# Current runtime facts (AGENT_HANDOFF.md "Runtime Environment" is authoritative —
+# this block only covers the one-time bootstrap steps, not the routing topology):
+#   - Tenon listens on PORT=3001 (port 3000 is Grafana — do not use it)
+#   - user is bhughes, not brian — DATA_DIR=/home/bhughes/data
+#   - port 443 belongs to the fuel-tracker calorie app; never funnel onto it bare
+#     (`tailscale funnel --bg 3001` with no --https= overwrites the 443 mapping)
+#
 # 1. Install volta + Node 22:
 #    curl https://get.volta.sh | bash
 #    volta install node@22
@@ -93,8 +100,8 @@ echo "==> Deployed $TS"
 # 2. Create env file:
 #    sudo mkdir -p /etc/tenon
 #    sudo tee /etc/tenon/env <<'ENVEOF'
-#    PORT=3000
-#    DATA_DIR=/home/brian/data
+#    PORT=3001
+#    DATA_DIR=/home/bhughes/data
 #    MCP_BEARER_TOKEN=$(openssl rand -hex 32)
 #    NODE_ENV=production
 #    ENVEOF
@@ -108,10 +115,11 @@ echo "==> Deployed $TS"
 #    sudo tailscale cert mini-canterbury.<tailnet>.ts.net
 #    # Certs land at /var/lib/tailscale/certs/ — configure server to use them (chunk 3)
 #
-# 5. Tailscale Funnel for /mcp (Claude.ai is outside the tailnet):
-#    tailscale funnel --bg 443
+# 5. Tailscale Funnel for /mcp (Claude.ai is outside the tailnet) — scoped to the
+#    8443 HTTPS listener, NOT bare 443 (443 is the calorie app, see gotcha #6):
+#    tailscale funnel --bg --https=8443 3001
 #    # Bearer auth enforced in server middleware (chunk 4)
 #
-# 6. REST API stays tailnet-only via tailscale serve:
-#    tailscale serve --bg 3000
+# 6. The Tenon PWA itself stays tailnet-only (no funnel) — reached at
+#    https://mini-canterbury.<tailnet>.ts.net:8443/ directly over the tailnet.
 # ---------------------------------------------------------------------------

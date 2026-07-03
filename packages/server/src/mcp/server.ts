@@ -155,6 +155,7 @@ function buildMcpServer(auditLog: pino.Logger, dataDir: string): McpServer {
     if (!db.prepare('SELECT id FROM jobs WHERE id = ?').get(job_id)) return err('job not found')
     const id = makeNoteId()
     db.prepare('INSERT INTO notes (id, job_id, body, created_at) VALUES (?, ?, ?, ?)').run(id, job_id, body, new Date().toISOString())
+    emitSse('job_changed', { id: job_id, event: 'note_added' })
     return { content: [text(db.prepare('SELECT * FROM notes WHERE id = ?').get(id))] }
   })
 
@@ -174,6 +175,7 @@ function buildMcpServer(auditLog: pino.Logger, dataDir: string): McpServer {
     const id = makeTimeLogId()
     db.prepare('INSERT INTO time_logs (id, job_id, minutes, category, note, logged_at) VALUES (?, ?, ?, ?, ?, ?)')
       .run(id, job_id, minutes, category ?? null, note ?? null, new Date().toISOString())
+    emitSse('job_changed', { id: job_id, event: 'time_logged' })
     return { content: [text(db.prepare('SELECT * FROM time_logs WHERE id = ?').get(id))] }
   })
 

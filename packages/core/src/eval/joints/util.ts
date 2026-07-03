@@ -1,26 +1,33 @@
 // Shared box math for the JointFns (docs/chunk9-design.md §3). No WASM, no THREE —
-// every cut in v1 is an axis-aligned prism (§6 step 3), so a JointFn is pure box
-// geometry that returns CutterBox specs in each board's LOCAL frame. evaluate.ts
-// turns those specs into Manifold prisms and carves.
+// every cut is an axis-aligned prism IN THE PAIR FRAME (§6 step 3), so a JointFn is
+// pure box geometry that returns CutterBox specs in each board's LOCAL frame.
+// evaluate.ts turns those specs into Manifold prisms and carves.
 //
 // The recipe pattern every JointFn follows:
-//   1. R = worldOverlap(a, b)            — the world-space box where a and b intersect.
-//   2. Pick world axes from each board's OBB (length/width/thickness) and R's extents.
-//   3. Build the cutter(s) as WORLD AABBs (overcutting the OPEN faces by OVERCUT so a
-//      coplanar cut leaves no zero-thickness skin — gotcha #4).
-//   4. toLocal() each world cutter into the target board's local frame.
-// Because v1 boards are 90°-aligned, a world-axis box maps to a local-axis box exactly
-// (worldBoxToLocal), so the carve runs board-local and the chunk 7/8 gizmo path is
-// untouched (§5, gotcha #5).
+//   1. R = worldOverlap(a, b)            — the box where a and b intersect (pair frame).
+//   2. Pick axes from each board's OBB (length/width/thickness) and R's extents.
+//   3. Build the cutter(s) as pair-frame AABBs (overcutting the OPEN faces by OVERCUT
+//      so a coplanar cut leaves no zero-thickness skin — gotcha #4).
+//   4. toLocal() each cutter into the target board's local frame.
+//
+// The PAIR FRAME is board a's own local frame (pairSolids below). Every quantity a
+// recipe reads — a.aabb, b.aabb, the OBB axes, the overlap R — is expressed in it, so
+// the identical box math that was exact for world-aligned boards is now exact whenever
+// the two boards are square TO EACH OTHER, at any assembly orientation (§Angle
+// readiness). The names kept their "world" flavor (worldOverlap, lengthAxisW) because
+// the recipes' logic is unchanged; "W" now reads "in the pair frame".
 
 import {
+  eulerXYZToMat3,
   overlapRegion,
-  worldBoxToLocal,
+  reframeBox,
+  pairFrame,
   extent,
   center,
   type AABB,
   type Vec3,
 } from '../../geometry/aabb.js'
+import type { Board } from '../../board.js'
 import { WarningCode, type Warning } from '../../common.js'
 import type { BoardSolid, CutterBox, CutFeatureKind } from '../types.js'
 
@@ -54,6 +61,38 @@ export const otherAxis = (i: Axis, j: Axis): Axis => (3 - i - j) as Axis
 // the 1/64" grace returns no cutters here — silent, but the gap is sub-visual.
 export const worldOverlap = (a: BoardSolid, b: BoardSolid): AABB | null => overlapRegion(a.aabb, b.aabb)
 
+// Build the two BoardSolids a JointFn consumes, expressed in the PAIR frame (board a's
+// local frame). a's box is its exact local box (identity axes); b's is reframed into
+// a's frame via pairFrame() — exact iff `aligned`. Callers (evaluate.ts) must gate on
+// the joint precondition, which rejects non-aligned pairs, before carving from these.
+export function pairSolids(a: Board, b: Board): { a: BoardSolid; b: BoardSolid; aligned: boolean } {
+  const pf = pairFrame(a, b)
+  const frame = { pos: a.transform.pos, rot: eulerXYZToMat3(...a.transform.rot) }
+  return {
+    a: {
+      board: a,
+      aabb: pf.aBox,
+      obb: {
+        center: [0, 0, 0],
+        axes: [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+        halfExtents: [a.dims.l / 2, a.dims.w / 2, a.dims.t / 2],
+      },
+      frame,
+    },
+    b: {
+      board: b,
+      aabb: pf.bBox,
+      obb: {
+        center: center(pf.bBox),
+        axes: pf.bAxes,
+        halfExtents: [b.dims.l / 2, b.dims.w / 2, b.dims.t / 2],
+      },
+      frame,
+    },
+    aligned: pf.aligned,
+  }
+}
+
 // Round to the nearest tool increment (1/8" bridle, 1/16" M&T) — snap_to_tool.
 export const snap = (v: number, step: number): number => Math.round(v / step) * step
 
@@ -69,10 +108,11 @@ export const spanBox = (s: Spans): AABB => ({
   max: [s[0][1], s[1][1], s[2][1]],
 })
 
-// World-space cutter AABB → target board's LOCAL frame, tagged with its CutFeature.
-// 90°-exact (worldBoxToLocal); off-axis boards get a conservative box.
-export function toLocal(s: BoardSolid, world: AABB, feature: CutFeatureKind): CutterBox {
-  const loc = worldBoxToLocal(s.board, world)
+// Pair-frame cutter AABB → target board's LOCAL frame, tagged with its CutFeature.
+// EXACT for mutually-square pairs (the reframe rotation is then a signed permutation).
+// For board a this is the identity (the pair frame IS a's local frame).
+export function toLocal(s: BoardSolid, box: AABB, feature: CutFeatureKind): CutterBox {
+  const loc = reframeBox(box, s.frame.pos, s.frame.rot, s.board.transform.pos, eulerXYZToMat3(...s.board.transform.rot))
   return { min: loc.min, max: loc.max, feature }
 }
 

@@ -49,12 +49,26 @@ export interface CutterSet {
   warnings: Warning[]
 }
 
+// The reference frame a BoardSolid's boxes are expressed in: an origin + a rotation
+// matrix (rows/cols per geometry/aabb.ts conventions). Joint carving uses the PAIR
+// frame — board a's own local frame — so recipes are exact whenever the two boards
+// are square to each other, at ANY world orientation (§Angle readiness).
+export interface SolidFrame {
+  pos: Vec3
+  rot: number[][] // 3×3 rotation, frame-local → world
+}
+
 // Pure geometric description of a board for JointFns — no Manifold (the cutter math
-// is analytic box geometry). `obb` is angle-readiness insurance (§Angle readiness).
+// is analytic box geometry). `aabb`/`obb` are expressed in `frame`, NOT in world:
+// evaluate.ts builds these per joint via pairSolids(), so for board a the aabb is its
+// own exact local box and for board b it is b's box as seen from a's frame (exact for
+// mutually-square pairs). toLocal() uses `frame` to convert cutter boxes into each
+// target board's local frame.
 export interface BoardSolid {
   board: Board
   aabb: AABB
   obb: OBB
+  frame: SolidFrame
 }
 
 export interface EvalCtx {

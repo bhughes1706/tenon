@@ -74,8 +74,18 @@ router.patch('/:id', (req, res) => {
   if (!row) return res.status(404).json({ error: 'not found' })
   const { name, job_id } = req.body as Record<string, string | undefined>
   const now = new Date().toISOString()
-  db.prepare('UPDATE models SET name = COALESCE(?, name), job_id = COALESCE(?, job_id), updated_at = ? WHERE id = ?')
-    .run(name ?? null, job_id ?? null, now, req.params.id)
+  // `name` is duplicated in the `models.name` column (for list queries) and `doc.name`
+  // (for the designer, which reads the whole doc) — keep both in sync or they drift.
+  if (name !== undefined) {
+    const doc = JSON.parse(row.doc) as Model
+    doc.name = name
+    doc.meta.updated_at = now
+    db.prepare('UPDATE models SET name = ?, job_id = COALESCE(?, job_id), doc = ?, updated_at = ? WHERE id = ?')
+      .run(name, job_id ?? null, JSON.stringify(doc), now, req.params.id)
+  } else {
+    db.prepare('UPDATE models SET job_id = COALESCE(?, job_id), updated_at = ? WHERE id = ?')
+      .run(job_id ?? null, now, req.params.id)
+  }
   res.json(db.prepare('SELECT id, job_id, name, rev, thumbnail, created_at, updated_at FROM models WHERE id = ?').get(req.params.id))
 })
 
@@ -127,8 +137,13 @@ router.post('/:id/ops', (req, res) => {
   // transaction (the fast check above is outside the transaction, so the window exists).
   // `changes === 0` means another writer updated rev while we were validating (§3.3).
   const committed = db.transaction((): boolean => {
-    const info = db.prepare('UPDATE models SET doc = ?, rev = ?, updated_at = ? WHERE id = ? AND rev = ?')
-      .run(JSON.stringify(updated), newRev, now, req.params.id, expected_rev)
+    // `set_model_meta` can change doc.name — keep the `models.name` column (used by list
+    // queries) in sync so it doesn't drift from the doc (which the designer reads).
+    const info = model.name === updated.name
+      ? db.prepare('UPDATE models SET doc = ?, rev = ?, updated_at = ? WHERE id = ? AND rev = ?')
+          .run(JSON.stringify(updated), newRev, now, req.params.id, expected_rev)
+      : db.prepare('UPDATE models SET doc = ?, rev = ?, name = ?, updated_at = ? WHERE id = ? AND rev = ?')
+          .run(JSON.stringify(updated), newRev, updated.name, now, req.params.id, expected_rev)
     if (info.changes === 0) return false
     if (newRev % SNAPSHOT_INTERVAL === 0) {
       db.prepare('INSERT OR REPLACE INTO model_snapshots (model_id, rev, doc, created_at) VALUES (?, ?, ?, ?)')
@@ -149,9 +164,9 @@ router.post('/:id/ops', (req, res) => {
     return res.status(409).json(result)
   }
 
-  // Step 4 (§6): the analytic collision pass over the committed model is the
-  // AUTHORITY for UNRESOLVED_COLLISION (no Manifold in Node — warnings, not meshes).
-  // Joined with the step-3 precondition re-derivation warnings from validateOps.
+  // Step 4 (§6): the analytic lint pass over the committed model is the AUTHORITY for
+  // UNRESOLVED_COLLISION and JOINT_PRECONDITION_FAILED (no Manifold in Node — warnings,
+  // not meshes). Both are persistent model state, re-derived here on every commit.
   const warnings: Warning[] = [...validation.warnings, ...recomputeWarnings(updated)]
 
   emitSse('model_changed', { id: req.params.id, rev: newRev })

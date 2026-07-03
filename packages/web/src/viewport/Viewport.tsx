@@ -226,10 +226,13 @@ function SceneContents({
   )
 
   const selectedId = selection.length === 1 ? selection[0] : null
+  const selectedLocked = selectedId ? model?.boards.find((b) => b.id === selectedId)?.locked ?? false : false
   const [gizmoTarget, setGizmoTarget] = useState<THREE.Object3D | null>(null)
   useEffect(() => {
-    setGizmoTarget(selectedId ? meshRefs.current.get(selectedId) ?? null : null)
-  }, [selectedId, model])
+    // A locked board gets no gizmo — dragging/rotating it would just be rejected
+    // server-side (validateOps), so don't let the user start a drag at all.
+    setGizmoTarget(selectedId && !selectedLocked ? meshRefs.current.get(selectedId) ?? null : null)
+  }, [selectedId, selectedLocked, model])
 
   const [measurePts, setMeasurePts] = useState<THREE.Vector3[]>([])
   useEffect(() => {

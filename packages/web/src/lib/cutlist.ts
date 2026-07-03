@@ -3,7 +3,7 @@
 // Here we only (a) adapt the cached species list + settings into CutlistOpts and (b)
 // serialize a result to CSV (§7.7). The on-screen table lives in DesignerShell's CutlistPanel.
 
-import { fmtFraction, type CutlistOpts, type CutlistResult, type CutlistSpecies } from '@tenon/core'
+import { fmtFraction, SETTINGS_DEFAULTS, type CutlistOpts, type CutlistResult, type CutlistSpecies } from '@tenon/core'
 import type { Species } from './speciesApi.js'
 import type { Settings } from './api.js'
 
@@ -14,9 +14,9 @@ export function buildCutlistOpts(species: Species[], settings: Settings | null):
   }
   return {
     species: map,
-    wasteFactorSolid: settings?.waste_factor_solid ?? 0.2,
-    wasteFactorSheet: settings?.waste_factor_sheet ?? 0.1,
-    fractionPrecision: settings?.fraction_precision ?? 16,
+    wasteFactorSolid: settings?.waste_factor_solid ?? SETTINGS_DEFAULTS.waste_factor_solid,
+    wasteFactorSheet: settings?.waste_factor_sheet ?? SETTINGS_DEFAULTS.waste_factor_sheet,
+    fractionPrecision: settings?.fraction_precision ?? SETTINGS_DEFAULTS.fraction_precision,
   }
 }
 

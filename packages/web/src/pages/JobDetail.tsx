@@ -403,6 +403,37 @@ export function JobDetail() {
 
   useEffect(() => { void load() }, [load])
 
+  // JobDetail is the only page outside the designer that cares about live server
+  // state — subscribe so a photo uploaded via MCP/phone or a note/time log added
+  // via MCP shows up without a manual refresh.
+  useEffect(() => {
+    if (!id) return
+    const es = new EventSource('/api/events')
+    const onPhotoAdded = (ev: MessageEvent) => {
+      try {
+        const data = JSON.parse(ev.data) as { job_id?: string }
+        if (data.job_id === id) void load()
+      } catch {
+        // ignore malformed event payloads
+      }
+    }
+    const onJobChanged = (ev: MessageEvent) => {
+      try {
+        const data = JSON.parse(ev.data) as { id?: string }
+        if (data.id === id) void load()
+      } catch {
+        // ignore malformed event payloads
+      }
+    }
+    es.addEventListener('photo_added', onPhotoAdded as EventListener)
+    es.addEventListener('job_changed', onJobChanged as EventListener)
+    return () => {
+      es.removeEventListener('photo_added', onPhotoAdded as EventListener)
+      es.removeEventListener('job_changed', onJobChanged as EventListener)
+      es.close()
+    }
+  }, [id, load])
+
   const TABS: Array<{ id: Tab; label: string }> = [
     { id: 'overview',  label: 'Overview' },
     { id: 'photos',    label: `Photos${job ? ` (${job.photos.length})` : ''}` },

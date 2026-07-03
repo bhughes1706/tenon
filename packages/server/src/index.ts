@@ -1,5 +1,6 @@
 import express from 'express'
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import pino from 'pino'
 import rateLimit from 'express-rate-limit'
@@ -23,7 +24,12 @@ const log = pino({
 })
 
 const port = Number(process.env.PORT ?? 3000)
-const dataDir = path.resolve(process.env.DATA_DIR ?? path.join(__dirname, '../../data'))
+// Without DATA_DIR set, default OUTSIDE the repo — `__dirname` at runtime is
+// `dist/`, so a repo-relative default (e.g. `../../data`) used to land at
+// `packages/data/`, inside the monorepo tree where it could be wiped by a
+// repo-level clean or accidentally committed. Production always sets DATA_DIR
+// via /etc/tenon/env; this default is only a safety net for ad-hoc runs.
+const dataDir = path.resolve(process.env.DATA_DIR ?? path.join(os.homedir(), '.tenon', 'data'))
 
 // Initialize DB and run pending migrations before accepting traffic
 openDb(dataDir)
@@ -79,6 +85,13 @@ app.use('/mcp', mcpRateLimit, bearerAuth(), async (req, res, next) => {
   } catch (err) {
     next(err)
   }
+})
+
+// An unknown /api/* route should 404 as JSON, not fall through to the SPA's
+// index.html (the catch-all below would otherwise serve HTML for a typo'd or
+// removed API path, which is confusing to debug from a fetch() call).
+app.use('/api', (_req, res) => {
+  res.status(404).json({ error: 'not found' })
 })
 
 // ── Static PWA ───────────────────────────────────────────────────────────────

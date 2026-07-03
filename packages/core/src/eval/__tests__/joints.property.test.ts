@@ -5,9 +5,9 @@
 import { describe, it, expect } from 'vitest'
 import { evaluate } from '../evaluate.js'
 import { JOINT_FNS } from '../joints/index.js'
-import { worldAABB, worldOBB } from '../../geometry/aabb.js'
+import { pairSolids } from '../joints/util.js'
 import type { Board } from '../../board.js'
-import type { BoardSolid, EvalMesh } from '../types.js'
+import type { EvalMesh } from '../types.js'
 import type { JointType } from '../../joint.js'
 import {
   board,
@@ -21,8 +21,6 @@ async function carve(model: Parameters<typeof evaluate>[0]): Promise<Map<string,
   const { boards } = await evaluate(model)
   return new Map(boards.map((b) => [b.id, b.mesh]))
 }
-
-const solid = (b: Board): BoardSolid => ({ board: b, aabb: worldAABB(b), obb: worldOBB(b) })
 
 // Each fixture: two genuinely-overlapping 90° boards + the analytic removed volumes.
 interface Case {
@@ -100,7 +98,8 @@ describe('JointFns — containment (§6.1: cutter ⊂ target board)', () => {
     if (c.name === 'butt') continue // butt removes nothing
     it(`${c.name}: every cutter sits inside its target board`, () => {
       const fn = JOINT_FNS[c.name]!
-      const set = fn(solid(c.a), solid(c.b), c.params ?? {}, { model: jointModel(c.a, c.b, c.name, c.params), tol: 1 / 64 })
+      const pair = pairSolids(c.a, c.b)
+      const set = fn(pair.a, pair.b, c.params ?? {}, { model: jointModel(c.a, c.b, c.name, c.params), tol: 1 / 64 })
       const within = (cutters: typeof set.a, b: Board) => {
         const h = [b.dims.l / 2, b.dims.w / 2, b.dims.t / 2]
         for (const cut of cutters) {
@@ -193,7 +192,8 @@ describe('JointFns — cut placement', () => {
     // a=24×12×0.75 flat panel, b enters from +Z; dado should open at a's +Z face.
     const c = CASES.find((x) => x.name === 'housing')!
     const fn = JOINT_FNS['housing']!
-    const set = fn(solid(c.a), solid(c.b), {}, ctx(c.a, c.b, 'housing'))
+    const pair = pairSolids(c.a, c.b)
+    const set = fn(pair.a, pair.b, {}, ctx(c.a, c.b, 'housing'))
     expect(set.a).toHaveLength(1)
     // Cutter max Z = +t_a/2 = 0.375 (flush with a's top face — overcut opens it at carve time).
     expect(set.a[0].max[2]).toBeCloseTo(0.375, 5)
@@ -206,7 +206,8 @@ describe('JointFns — cut placement', () => {
     // depth (t_a/2=0.375) cut into +Z face; width (t_b=0.5) strip at +Y edge.
     const c = CASES.find((x) => x.name === 'rabbet')!
     const fn = JOINT_FNS['rabbet']!
-    const set = fn(solid(c.a), solid(c.b), {}, ctx(c.a, c.b, 'rabbet'))
+    const pair = pairSolids(c.a, c.b)
+    const set = fn(pair.a, pair.b, {}, ctx(c.a, c.b, 'rabbet'))
     expect(set.a).toHaveLength(1)
     expect(set.a[0].max[2]).toBeCloseTo(0.375, 5)  // +Z face (depth axis)
     expect(set.a[0].min[2]).toBeCloseTo(0, 5)       // depth = t_a/2, so 0.375−0.375=0
@@ -220,7 +221,8 @@ describe('JointFns — cut placement', () => {
     // b is rotated 90° around Z; in b's local frame the cut is also its +Z half.
     const c = CASES.find((x) => x.name === 'half_lap')!
     const fn = JOINT_FNS['half_lap']!
-    const set = fn(solid(c.a), solid(c.b), {}, ctx(c.a, c.b, 'half_lap'))
+    const pair = pairSolids(c.a, c.b)
+    const set = fn(pair.a, pair.b, {}, ctx(c.a, c.b, 'half_lap'))
     // a (no rotation): cutter is bottom half in local Z.
     expect(set.a[0].min[2]).toBeCloseTo(-0.375, 5)
     expect(set.a[0].max[2]).toBeCloseTo(0, 5)
@@ -234,7 +236,8 @@ describe('JointFns — cut placement', () => {
     // Tenon = snap(1/3 * 1, 1/8) = 0.375. Slot centred: Z:[−0.1875, +0.1875].
     const c = CASES.find((x) => x.name === 'bridle')!
     const fn = JOINT_FNS['bridle']!
-    const set = fn(solid(c.a), solid(c.b), {}, ctx(c.a, c.b, 'bridle'))
+    const pair = pairSolids(c.a, c.b)
+    const set = fn(pair.a, pair.b, {}, ctx(c.a, c.b, 'bridle'))
     expect(set.a).toHaveLength(1)
     // Slot reaches a's +X end face (halfL = 3).
     expect(set.a[0].max[0]).toBeCloseTo(3, 5)
@@ -249,7 +252,8 @@ describe('JointFns — cut placement', () => {
     // Mortise: X:[−0.25,+0.25] (centred), Z:[−0.75,+0.75] (through).
     const c = CASES.find((x) => x.name === 'mortise_tenon')!
     const fn = JOINT_FNS['mortise_tenon']!
-    const set = fn(solid(c.a), solid(c.b), {}, ctx(c.a, c.b, 'mortise_tenon'))
+    const pair = pairSolids(c.a, c.b)
+    const set = fn(pair.a, pair.b, {}, ctx(c.a, c.b, 'mortise_tenon'))
     expect(set.a).toHaveLength(1)
     // Centred in a's thickness axis (X): ±tenonThk/2 = ±0.25.
     expect(set.a[0].min[0]).toBeCloseTo(-0.25, 5)
@@ -257,6 +261,55 @@ describe('JointFns — cut placement', () => {
     // Through mortise: full Z extent of a = ±t_a/2 = ±0.75.
     expect(set.a[0].min[2]).toBeCloseTo(-0.75, 5)
     expect(set.a[0].max[2]).toBeCloseTo(0.75, 5)
+  })
+})
+
+// Pair-frame carving (§Angle readiness): joints are exact whenever the two boards are
+// square TO EACH OTHER, regardless of the assembly's world orientation. Each case here
+// takes a canonical fixture and rigid-rotates the WHOLE pair about the origin; the
+// carved (board-local) volumes must equal the unrotated analytic targets. These fail
+// against the old world-frame math (world AABBs of tilted boards over-report, and
+// worldBoxToLocal degrades to a conservative bound).
+describe('pair-frame carving — assembly rotated off-axis', () => {
+  it('mortise_tenon: yaw-rotated 30° assembly carves the exact analytic volumes', async () => {
+    // The canonical through-M&T fixture rotated 30° about world Y: positions rotate
+    // (rotY(30)·[0,0,1.25]), world Euler yaws compose additively (90° + 30° = 120°).
+    const a = board({ id: 'brd_a', l: 4, w: 4, t: 1.5, pos: [0, 0, 0], rot: [0, 30, 0] })
+    const b = board({
+      id: 'brd_b', l: 4, w: 3, t: 1.5,
+      pos: [0.6249999999999999, 0, 1.0825317547305484], rot: [0, 120, 0],
+    })
+    const { warnings } = await evaluate(jointModel(a, b, 'mortise_tenon'))
+    expect(warnings).toEqual([])
+    const meshes = await carve(jointModel(a, b, 'mortise_tenon'))
+    expect(removedVolume(a, meshes.get('brd_a')!)).toBeCloseTo(0.5 * 2.25 * 1.5, 3)
+    expect(removedVolume(b, meshes.get('brd_b')!)).toBeCloseTo(1.5 * (1.5 * 3 - 0.5 * 2.25), 3)
+  })
+
+  it('half_lap: roll-rotated 30° assembly carves exact complementary laps', async () => {
+    // The canonical crossing-rails fixture rotated 30° about world X. Both boards sit at
+    // the origin so positions are unchanged; b's world rotation composes to Euler-XYZ
+    // [30, 0, 90] (= Rx(30)·Rz(90), matching this codebase's Rx·Ry·Rz convention).
+    const a = board({ id: 'brd_a', l: 12, w: 2, t: 0.75, pos: [0, 0, 0], rot: [30, 0, 0] })
+    const b = board({ id: 'brd_b', l: 12, w: 2, t: 0.75, pos: [0, 0, 0], rot: [30, 0, 90] })
+    const meshes = await carve(jointModel(a, b, 'half_lap'))
+    const removedA = removedVolume(a, meshes.get('brd_a')!)
+    const removedB = removedVolume(b, meshes.get('brd_b')!)
+    expect(removedA).toBeCloseTo(2 * 2 * 0.375, 3)
+    expect(removedB).toBeCloseTo(2 * 2 * 0.375, 3)
+    expect(removedA + removedB).toBeCloseTo(2 * 2 * 0.75, 3) // complement invariant holds rotated
+  })
+
+  it('compound-angle pair (not square to each other) is rejected, not carved wrong', async () => {
+    const a = board({ id: 'brd_a', l: 4, w: 4, t: 1.5, pos: [0, 0, 0] })
+    const b = board({ id: 'brd_b', l: 4, w: 3, t: 1.5, pos: [0, 0, 1], rot: [0, 45, 0] })
+    const { boards, warnings } = await evaluate(jointModel(a, b, 'mortise_tenon'))
+    expect(warnings.map((w) => w.code)).toContain('JOINT_PRECONDITION_FAILED')
+    expect(warnings.find((w) => w.code === 'JOINT_PRECONDITION_FAILED')!.msg).toMatch(/square|compound/)
+    // Both boards render as full, uncut base solids.
+    const meshes = new Map(boards.map((x) => [x.id, x.mesh]))
+    expect(meshVolume(meshes.get('brd_a')!.positions)).toBeCloseTo(4 * 4 * 1.5, 3)
+    expect(meshVolume(meshes.get('brd_b')!.positions)).toBeCloseTo(4 * 3 * 1.5, 3)
   })
 })
 

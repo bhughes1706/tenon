@@ -319,11 +319,16 @@ export const useModelStore = create<ModelState>((set, get) => {
     },
 
     async removeSelected() {
-      const { selection } = get()
-      if (selection.length === 0) return
-      const ops: Op[] = selection.map((id) => ({ op: 'remove_board', id }))
+      const { selection, model } = get()
+      if (selection.length === 0 || !model) return
+      // Locked boards are dropped from the batch (not just skipped-on-error) — a single
+      // remove_board on a locked board would fail validateOps for the WHOLE batch,
+      // silently blocking removal of the other, unlocked boards too.
+      const removable = selection.filter((id) => !model.boards.find((b) => b.id === id)?.locked)
+      if (removable.length === 0) return
+      const ops: Op[] = removable.map((id) => ({ op: 'remove_board', id }))
       const ok = await get().dispatch(ops)
-      if (ok) set({ selection: [] })
+      if (ok) set({ selection: selection.filter((id) => !removable.includes(id)) })
     },
 
     // Duplicate via add_board (not the non-invertible duplicate_board op) with
@@ -402,6 +407,30 @@ export const useModelStore = create<ModelState>((set, get) => {
     // (rev ahead of ours) refetches and clears local undo history (§3.3).
     connectEvents() {
       const es = new EventSource('/api/events')
+      // EventSource auto-reconnects on drop, but any model_changed events fired during
+      // the gap are lost (no replay). On the 'open' that follows an 'error', refetch —
+      // the first 'open' (initial connect) is a no-op since hadError starts false.
+      let hadError = false
+      const onOpen = () => {
+        if (!hadError) return
+        hadError = false
+        const { modelId } = get()
+        if (!modelId) return
+        fetchModel(modelId)
+          .then((fresh) =>
+            set({
+              model: fresh,
+              warnings: recomputeWarnings(fresh),
+              undoStack: [],
+              redoStack: [],
+              toast: 'Reconnected — model refreshed',
+            }),
+          )
+          .catch(() => {})
+      }
+      const onError = () => { hadError = true }
+      es.addEventListener('open', onOpen)
+      es.addEventListener('error', onError)
       const onModelChanged = (ev: MessageEvent) => {
         const { modelId, model } = get()
         if (!modelId || !model) return
@@ -428,6 +457,8 @@ export const useModelStore = create<ModelState>((set, get) => {
       }
       es.addEventListener('model_changed', onModelChanged as EventListener)
       return () => {
+        es.removeEventListener('open', onOpen)
+        es.removeEventListener('error', onError)
         es.removeEventListener('model_changed', onModelChanged as EventListener)
         es.close()
       }

@@ -2,13 +2,18 @@ import { describe, it, expect } from 'vitest'
 import { BoardSchema } from '../../board.js'
 import { checkJointPrecondition } from '../preconditions.js'
 
-const board = (id: string, pos: [number, number, number], dims: { l: number; w: number; t: number }) =>
+const board = (
+  id: string,
+  pos: [number, number, number],
+  dims: { l: number; w: number; t: number },
+  rot: [number, number, number] = [0, 0, 0],
+) =>
   BoardSchema.parse({
     id,
     name: id,
     dims,
     species: 'spc_red_oak',
-    transform: { pos, rot: [0, 0, 0] },
+    transform: { pos, rot },
   })
 
 // A "stile" along x and a "rail" whose end overlaps it by `engage` inches.
@@ -66,5 +71,29 @@ describe('checkJointPrecondition — half_lap crossing', () => {
     const a = board('brd_a', [0, 0, 0], { l: 20, w: 3, t: 0.75 })
     const b = board('brd_b', [0, 0, 0], { l: 3, w: 20, t: 0.75 }) // crosses a, same z
     expect(checkJointPrecondition('half_lap', a, b).ok).toBe(true)
+  })
+})
+
+describe('checkJointPrecondition — relative alignment (§Angle readiness)', () => {
+  it('accepts a pair that is square to each other even when the assembly is rotated off-axis', () => {
+    // The through-M&T fixture yaw-rotated 30° as a rigid assembly: still square to each
+    // other (relative rotation 90°), so preconditions must pass at full engagement.
+    const a = board('brd_a', [0, 0, 0], { l: 4, w: 4, t: 1.5 }, [0, 30, 0])
+    const b = board(
+      'brd_b',
+      [0.6249999999999999, 0, 1.0825317547305484],
+      { l: 4, w: 3, t: 1.5 },
+      [0, 120, 0],
+    )
+    expect(checkJointPrecondition('mortise_tenon', a, b).ok).toBe(true)
+  })
+
+  it('rejects a compound-angle pair with a teaching reason', () => {
+    const a = board('brd_a', [0, 0, 0], { l: 4, w: 4, t: 1.5 })
+    const b = board('brd_b', [0, 0, 1], { l: 4, w: 3, t: 1.5 }, [0, 45, 0])
+    const res = checkJointPrecondition('mortise_tenon', a, b)
+    expect(res.ok).toBe(false)
+    expect(res.reason).toMatch(/square|compound/)
+    expect(res.reason).toMatch(/brd_a/)
   })
 })

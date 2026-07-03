@@ -21,6 +21,7 @@ type SimJoint = { type: JointType; a: string; b: string }
 
 type SimState = {
   boards: Set<string>
+  locked: Map<string, boolean>
   joints: Map<string, SimJoint>
   groups: Set<string>
 }
@@ -53,6 +54,7 @@ export function validateOps(ops: unknown[], model: Model): ValidationResult {
   // past a failure the simulated state is no longer meaningful.
   const sim: SimState = {
     boards: new Set(model.boards.map(b => b.id)),
+    locked: new Map(model.boards.map(b => [b.id, b.locked])),
     joints: new Map(model.joints.map(j => [j.id, { type: j.type, a: j.a, b: j.b }])),
     groups: new Set(model.groups.map(g => g.id)),
   }
@@ -70,25 +72,25 @@ export function validateOps(ops: unknown[], model: Model): ValidationResult {
   }
 
   // Step 3 — joint geometric preconditions (§4.2 step 3, §5 "Requires"). Hard-fails
-  // an add_joint whose overlap can't support the type; soft-warns when a board move
-  // invalidates an existing joint (§2.4 #3). Analytic core — no Manifold needed.
+  // an add_joint whose overlap can't support the type. Analytic core — no Manifold.
   // (Step 4, the Manifold display carve, runs in the web worker, not here — the
   // server returns warnings, not meshes; see docs/chunk9-design.md §"Why the worker".)
-  const step3 = checkPreconditions(parsed, model)
-  if (step3.errors.length > 0) return { ok: false, errors: step3.errors, warnings: [], ops: [] }
+  //
+  // NOTE: a move/update that invalidates an EXISTING joint (§2.4 #3) is no longer
+  // soft-warned here — that lint is persistent state, not an op property, so it lives
+  // in geometry/collision.ts recomputeWarnings(), which every model set re-runs
+  // (client optimistic + server post-commit). Warning here too would double-emit.
+  const step3errors = checkAddJointPreconditions(parsed, model)
+  if (step3errors.length > 0) return { ok: false, errors: step3errors, warnings: [], ops: [] }
 
-  return { ok: true, errors: [], warnings: step3.warnings, ops: parsed }
+  return { ok: true, errors: [], warnings: [], ops: parsed }
 }
 
 // Step 3 helper. Rebuilds post-batch board geometry (dims + transform only — that's
-// all preconditions read) and the joint set, then runs the per-type precondition.
-function checkPreconditions(parsed: Op[], model: Model): { errors: string[]; warnings: Warning[] } {
+// all preconditions read), then hard-checks each add_joint against it.
+function checkAddJointPreconditions(parsed: Op[], model: Model): string[] {
   const boards = new Map<string, Board>(model.boards.map((b) => [b.id, b]))
-  const joints = new Map<string, SimJoint>(model.joints.map((j) => [j.id, { type: j.type, a: j.a, b: j.b }]))
-  const originalJointIds = new Set(model.joints.map((j) => j.id))
-  const movedBoards = new Set<string>() // boards whose geometry changed in this batch
   const addJointChecks: { index: number; type: JointType; a: string; b: string; params: Record<string, unknown> }[] = []
-  const updatedJointIds: string[] = []
 
   parsed.forEach((op, index) => {
     switch (op.op) {
@@ -97,10 +99,7 @@ function checkPreconditions(parsed: Op[], model: Model): { errors: string[]; war
         break
       case 'update_board': {
         const cur = boards.get(op.id)
-        if (cur) {
-          boards.set(op.id, { ...cur, ...op.patch } as Board)
-          if (op.patch.dims || op.patch.transform) movedBoards.add(op.id)
-        }
+        if (cur) boards.set(op.id, { ...cur, ...op.patch } as Board)
         break
       }
       case 'transform_board': {
@@ -110,24 +109,17 @@ function checkPreconditions(parsed: Op[], model: Model): { errors: string[]; war
             ...cur,
             transform: { pos: op.pos ?? cur.transform.pos, rot: op.rot ?? cur.transform.rot },
           })
-          movedBoards.add(op.id)
         }
         break
       }
-      case 'remove_board': {
+      case 'remove_board':
         boards.delete(op.id)
-        for (const [jid, j] of joints) if (j.a === op.id || j.b === op.id) joints.delete(jid)
         break
-      }
       case 'add_joint': {
-        const { id, type, a, b, params } = op.joint
+        const { type, a, b, params } = op.joint
         addJointChecks.push({ index, type, a, b, params: (params ?? {}) as Record<string, unknown> })
-        if (id) joints.set(id, { type, a, b })
         break
       }
-      case 'update_joint':
-        updatedJointIds.push(op.id)
-        break
       default:
         break
     }
@@ -142,30 +134,7 @@ function checkPreconditions(parsed: Op[], model: Model): { errors: string[]; war
     const res = checkJointPrecondition(c.type, a, b, c.params)
     if (!res.ok) errors.push(`ops[${c.index}] (add_joint): ${res.reason}`)
   }
-  if (errors.length > 0) return { errors, warnings: [] }
-
-  // Soft re-derivation: an EXISTING joint whose board moved/resized, or one touched by
-  // update_joint, may no longer satisfy its requires-row → warn, don't reject (§2.4 #3).
-  const toReDerive = new Map<string, SimJoint>()
-  for (const [jid, j] of joints) {
-    if (originalJointIds.has(jid) && (movedBoards.has(j.a) || movedBoards.has(j.b))) toReDerive.set(jid, j)
-  }
-  for (const id of updatedJointIds) {
-    const j = joints.get(id)
-    if (j && originalJointIds.has(id)) toReDerive.set(id, j)
-  }
-
-  const warnings: Warning[] = []
-  for (const [jid, j] of toReDerive) {
-    const a = boards.get(j.a)
-    const b = boards.get(j.b)
-    if (!a || !b) continue
-    const res = checkJointPrecondition(j.type, a, b)
-    if (!res.ok) {
-      warnings.push({ code: 'JOINT_PRECONDITION_FAILED', joints: [jid], boards: [j.a, j.b], msg: res.reason! })
-    }
-  }
-  return { errors, warnings }
+  return errors
 }
 
 function formatIssue(issue: z.ZodIssue): string {
@@ -181,15 +150,25 @@ function checkAndApply(op: Op, sim: SimState): string[] {
       if (id !== undefined) {
         if (sim.boards.has(id)) return [`board '${id}' already exists`]
         sim.boards.add(id)
+        sim.locked.set(id, op.board.locked ?? false)
       }
       return []
     }
 
-    case 'update_board':
-      return sim.boards.has(op.id) ? [] : [`board '${op.id}' does not exist`]
+    case 'update_board': {
+      if (!sim.boards.has(op.id)) return [`board '${op.id}' does not exist`]
+      // A locked board rejects edits — except the unlock patch itself, so it can
+      // be freed again.
+      if (sim.locked.get(op.id) && op.patch.locked !== false) {
+        return [`board '${op.id}' is locked`]
+      }
+      if (op.patch.locked !== undefined) sim.locked.set(op.id, op.patch.locked)
+      return []
+    }
 
     case 'transform_board': {
       if (!sim.boards.has(op.id)) return [`board '${op.id}' does not exist`]
+      if (sim.locked.get(op.id)) return [`board '${op.id}' is locked`]
       if (!op.pos && !op.rot) return ['transform_board requires pos or rot (or both)']
       return []
     }
@@ -200,7 +179,9 @@ function checkAndApply(op: Op, sim: SimState): string[] {
 
     case 'remove_board': {
       if (!sim.boards.has(op.id)) return [`board '${op.id}' does not exist`]
+      if (sim.locked.get(op.id)) return [`board '${op.id}' is locked`]
       sim.boards.delete(op.id)
+      sim.locked.delete(op.id)
       // Cascade (§4.1): joints referencing the board go with it.
       for (const [jointId, joint] of sim.joints) {
         if (joint.a === op.id || joint.b === op.id) sim.joints.delete(jointId)

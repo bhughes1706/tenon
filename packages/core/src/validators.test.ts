@@ -8,6 +8,7 @@ import {
 } from './joint.js'
 import { OpSchema } from './ops.js'
 import { validateOps } from './validators.js'
+import { recomputeWarnings } from './geometry/collision.js'
 import { SettingsSchema, SETTINGS_DEFAULTS } from './settings.js'
 import { HardwareSchema } from './hardware.js'
 import type { Model } from './model.js'
@@ -527,13 +528,84 @@ describe('validateOps — joint preconditions (§4.2 step 3)', () => {
     expect(result.warnings).toHaveLength(0)
   })
 
-  it('warns (but does not reject) when a move invalidates an existing joint (§2.4 #3)', () => {
+  it('a move that invalidates an existing joint passes validation; the persistent lint comes from recomputeWarnings (§2.4 #3)', () => {
     const ops = [{ op: 'transform_board', id: 'brd_BBBBBBBBBB', pos: [80, 0, 0] }]
     const result = validateOps(ops, MODEL_WITH_JOINT)
     expect(result.ok).toBe(true) // the move itself is legal
-    expect(result.warnings).toHaveLength(1)
-    expect(result.warnings[0].code).toBe('JOINT_PRECONDITION_FAILED')
-    expect(result.warnings[0].joints).toEqual(['jnt_AAAAAAAAAA'])
+    // No transient warning here — the invalidated joint is model state, re-derived on
+    // every model set by recomputeWarnings so the lint survives later unrelated edits.
+    expect(result.warnings).toHaveLength(0)
+    const moved: Model = {
+      ...MODEL_WITH_JOINT,
+      boards: MODEL_WITH_JOINT.boards.map((b) =>
+        b.id === 'brd_BBBBBBBBBB' ? { ...b, transform: { ...b.transform, pos: [80, 0, 0] as [number, number, number] } } : b,
+      ),
+    }
+    const warnings = recomputeWarnings(moved)
+    expect(warnings.map((w) => w.code)).toContain('JOINT_PRECONDITION_FAILED')
+    expect(warnings.find((w) => w.code === 'JOINT_PRECONDITION_FAILED')!.joints).toEqual(['jnt_AAAAAAAAAA'])
+  })
+})
+
+// ── validateOps — locked board enforcement ────────────────────────────────────
+
+describe('validateOps — locked board enforcement', () => {
+  const MODEL_WITH_LOCKED_A: Model = {
+    ...EMPTY_MODEL,
+    boards: [BoardSchema.parse({ ...BOARD_A, locked: true }), BoardSchema.parse(BOARD_B)],
+  }
+
+  it('rejects update_board on a locked board', () => {
+    const ops = [{ op: 'update_board', id: 'brd_AAAAAAAAAA', patch: { name: 'renamed' } }]
+    const result = validateOps(ops, MODEL_WITH_LOCKED_A)
+    expect(result.ok).toBe(false)
+    expect(result.errors[0]).toMatch(/is locked/)
+  })
+
+  it('allows an update_board patch of exactly {locked: false} to unlock', () => {
+    const ops = [{ op: 'update_board', id: 'brd_AAAAAAAAAA', patch: { locked: false } }]
+    const result = validateOps(ops, MODEL_WITH_LOCKED_A)
+    expect(result.ok).toBe(true)
+  })
+
+  it('allows a subsequent edit in the same batch once unlocked', () => {
+    const ops = [
+      { op: 'update_board', id: 'brd_AAAAAAAAAA', patch: { locked: false } },
+      { op: 'update_board', id: 'brd_AAAAAAAAAA', patch: { name: 'renamed' } },
+    ]
+    const result = validateOps(ops, MODEL_WITH_LOCKED_A)
+    expect(result.ok).toBe(true)
+  })
+
+  it('rejects transform_board on a locked board', () => {
+    const ops = [{ op: 'transform_board', id: 'brd_AAAAAAAAAA', pos: [1, 0, 0] }]
+    const result = validateOps(ops, MODEL_WITH_LOCKED_A)
+    expect(result.ok).toBe(false)
+    expect(result.errors[0]).toMatch(/is locked/)
+  })
+
+  it('rejects remove_board on a locked board', () => {
+    const ops = [{ op: 'remove_board', id: 'brd_AAAAAAAAAA' }]
+    const result = validateOps(ops, MODEL_WITH_LOCKED_A)
+    expect(result.ok).toBe(false)
+    expect(result.errors[0]).toMatch(/is locked/)
+  })
+
+  it('locking a board mid-batch blocks a later op on it in the same batch', () => {
+    const ops = [
+      { op: 'update_board', id: 'brd_BBBBBBBBBB', patch: { locked: true } },
+      { op: 'remove_board', id: 'brd_BBBBBBBBBB' },
+    ]
+    const result = validateOps(ops, MODEL_WITH_BOARDS)
+    expect(result.ok).toBe(false)
+    expect(result.errors[0]).toMatch(/^ops\[1\] \(remove_board\)/)
+    expect(result.errors[0]).toMatch(/is locked/)
+  })
+
+  it('an unrelated locked board does not block ops on other boards', () => {
+    const ops = [{ op: 'transform_board', id: 'brd_BBBBBBBBBB', pos: [21, 0, 0] }]
+    const result = validateOps(ops, MODEL_WITH_LOCKED_A)
+    expect(result.ok).toBe(true)
   })
 })
 
