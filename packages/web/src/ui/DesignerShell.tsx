@@ -5,17 +5,19 @@ import {
   Undo2, Redo2, Moon, Sun, Hammer, Search, Move3d, RotateCw,
   Highlighter,
 } from 'lucide-react'
-import type { Board } from '@tenon/core'
+import type { Board, Warning } from '@tenon/core'
 import { generateCutlist, fmtFraction } from '@tenon/core'
 import { useAppCtx } from '../lib/AppContext.js'
 import { useSpecies } from '../lib/speciesApi.js'
 import { buildCutlistOpts, cutlistToCsv, downloadCsv, printCutlist } from '../lib/cutlist.js'
 import { useModelStore, type DesignerPanel } from '../lib/modelStore.js'
 import { liveMembers } from '../lib/groups.js'
+import { JOINT_TYPE_LABELS } from '../lib/jointTypes.js'
 import { CommandPalette } from './CommandPalette.js'
 import { Viewport } from '../viewport/Viewport.js'
 import { Inspector } from './Inspector.js'
 import { AddBoardDialog } from './AddBoardDialog.js'
+import { JointDialog } from './JointDialog.js'
 import { ViewportContextMenu } from './ViewportContextMenu.js'
 
 const SNAP_CYCLE: Array<0.0625 | 0.03125 | 0> = [0.0625, 0.03125, 0]
@@ -168,12 +170,18 @@ export function DesignerShell() {
         case 'm': case 'M': s.setMode('measure'); break
         case 'g': case 'G': s.setGizmoMode('translate'); break
         case 'r': case 'R': s.setGizmoMode('rotate'); break
+        // §19.2: two overlapping boards selected → J opens the joint dialog.
+        case 'j': case 'J':
+          if (s.selection.length === 2) s.openJointDialog(s.selection[0], s.selection[1])
+          break
         case 'Escape':
           if (s.mode !== 'select') s.setMode('select')
+          else if (s.selectedJointId) s.setSelectedJoint(null)
           else s.clearSelection()
           break
         case 'Delete': case 'Backspace':
-          if (s.selection.length > 0) { e.preventDefault(); void s.removeSelected() }
+          if (s.selectedJointId) { e.preventDefault(); void s.removeSelectedJoint() }
+          else if (s.selection.length > 0) { e.preventDefault(); void s.removeSelected() }
           break
       }
     }
@@ -393,6 +401,7 @@ export function DesignerShell() {
         defaultSpecies={ctx.settings?.default_species ?? 'spc_red_oak'}
         precision={precision}
       />
+      <JointDialog precision={precision} />
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} ctx={ctx} />
     </div>
   )
@@ -437,8 +446,10 @@ function BoardRow({ board, selected, indent, onClick }: {
 function Outliner() {
   const model = useModelStore((s) => s.model)
   const selection = useModelStore((s) => s.selection)
+  const selectedJointId = useModelStore((s) => s.selectedJointId)
   const toggle = useModelStore((s) => s.toggleSelection)
   const setSelection = useModelStore((s) => s.setSelection)
+  const setSelectedJoint = useModelStore((s) => s.setSelectedJoint)
   const groupSelected = useModelStore((s) => s.groupSelected)
   const ungroup = useModelStore((s) => s.ungroup)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -513,6 +524,78 @@ function Outliner() {
       {ungroupedBoards.map((b) => (
         <BoardRow key={b.id} board={b} selected={selection.includes(b.id)} onClick={rowClick(b.id)} />
       ))}
+
+      {/* Joints (chunk 11) — selectable rows; the inspector becomes the param editor. */}
+      {model.joints.length > 0 && (
+        <>
+          <div style={{
+            fontSize: 'var(--text-xs)', fontWeight: 700, textTransform: 'uppercase',
+            letterSpacing: '0.05em', color: 'var(--text-faint)',
+            padding: '4px var(--sp-2)', marginTop: 'var(--sp-2)',
+            borderTop: '1px solid var(--border)',
+          }}>Joints</div>
+          {model.joints.map((j) => {
+            const sel = j.id === selectedJointId
+            return (
+              <button key={j.id} onClick={() => setSelectedJoint(j.id)} style={{
+                textAlign: 'left', border: 'none', cursor: 'pointer', width: '100%',
+                background: sel ? 'var(--accent-subtle)' : 'transparent',
+                color: sel ? 'var(--accent)' : j.enabled ? 'var(--text)' : 'var(--text-faint)',
+                padding: '4px var(--sp-2)', borderRadius: 'var(--radius-s)',
+                fontSize: 'var(--text-sm)', fontFamily: 'inherit',
+                display: 'flex', justifyContent: 'space-between', gap: 'var(--sp-2)',
+              }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {JOINT_TYPE_LABELS[j.type]}
+                  {!j.enabled && ' (off)'}
+                </span>
+                <span style={{ color: 'var(--text-faint)', fontSize: 'var(--text-xs)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {boardById.get(j.a)?.name ?? '?'}↔{boardById.get(j.b)?.name ?? '?'}
+                </span>
+              </button>
+            )
+          })}
+        </>
+      )}
+    </div>
+  )
+}
+
+// One lint row. Rows are actionable (§13 "the lint-driven flow IS the joint UX"):
+// an UNRESOLVED_COLLISION row selects the colliding pair and offers "Resolve as
+// joint…" (→ JointDialog); a row that names a joint selects that joint (inspector).
+function LintRow({ w }: { w: Warning }) {
+  const store = useModelStore.getState
+  const clickable = !!(w.joints?.length || w.boards?.length)
+  const select = () => {
+    const s = store()
+    if (w.joints?.length) s.setSelectedJoint(w.joints[0])
+    else if (w.boards?.length) s.setSelection(w.boards)
+  }
+  const resolvable = w.code === 'UNRESOLVED_COLLISION' && w.boards?.length === 2
+  return (
+    <div style={{ padding: '2px var(--sp-2)' }}>
+      <div
+        onClick={clickable ? select : undefined}
+        style={{ fontSize: 'var(--text-xs)', color: 'var(--warn)', cursor: clickable ? 'pointer' : undefined }}
+        title={clickable ? (w.joints?.length ? 'Select this joint' : 'Select these boards') : undefined}
+      >
+        <b>{w.code}</b> — {w.msg}
+      </div>
+      {resolvable && (
+        <button
+          onClick={() => {
+            const [a, b] = w.boards as [string, string]
+            store().setSelection([a, b])
+            store().openJointDialog(a, b)
+          }}
+          style={{
+            marginTop: 2, border: '1px solid var(--accent)', background: 'var(--accent-subtle)',
+            color: 'var(--accent)', cursor: 'pointer', borderRadius: 'var(--radius-s)',
+            padding: '2px var(--sp-2)', fontSize: 'var(--text-xs)', fontFamily: 'inherit',
+          }}
+        >Resolve as joint…</button>
+      )}
     </div>
   )
 }
@@ -527,11 +610,7 @@ function LintList() {
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
-      {all.map((w, i) => (
-        <div key={i} style={{ fontSize: 'var(--text-xs)', color: 'var(--warn)', padding: '2px var(--sp-2)' }}>
-          <b>{w.code}</b> — {w.msg}
-        </div>
-      ))}
+      {all.map((w, i) => <LintRow key={i} w={w} />)}
     </div>
   )
 }

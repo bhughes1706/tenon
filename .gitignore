@@ -30,3 +30,4 @@ releases/
 
 # Tailscale certs (contain private key)
 *.pem
+packages/server/web

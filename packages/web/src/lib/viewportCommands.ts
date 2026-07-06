@@ -51,16 +51,46 @@ export function registerViewportCommands(): void {
     run: () => void store().groupSelected(),
   })
 
-  // Joint creation is contextual on two selected boards (§19.2); the dialog and
-  // resolve flow land in chunk 11 — surface a hint until then.
+  // Joint creation is contextual on two selected boards (§19.2): J / palette /
+  // context menu all open the JointDialog on the selected pair.
   registry.register({
     id: 'joint',
     label: 'Add Joint…',
     icon: 'Link',
     shortcut: 'J',
     group: 'Tools',
+    contexts: ['multi'],
     when: (ctx) => inDesigner(ctx) && ctx.selection.length === 2,
-    run: () => useModelStore.setState({ toast: 'Joint dialog arrives in chunk 11' }),
+    run: () => {
+      const s = store()
+      if (s.selection.length === 2) s.openJointDialog(s.selection[0], s.selection[1])
+    },
+  })
+
+  // Joint context-menu entries (§19.3 "Joint: … Disable · Delete") — fire on a
+  // right-clicked joint face (menuTarget 'joint', selectedJointId set by the pick).
+  // "Edit params" needs no entry: the inspector is already showing the selection.
+  registry.register({
+    id: 'joint_toggle_enabled',
+    label: 'Disable / Enable Joint',
+    icon: 'Link2Off',
+    group: 'Edit',
+    contexts: ['joint'],
+    when: inDesigner,
+    run: () => {
+      const s = store()
+      if (s.selectedJointId) void s.toggleJointEnabled(s.selectedJointId)
+    },
+  })
+  registry.register({
+    id: 'joint_delete',
+    label: 'Delete Joint',
+    icon: 'Trash2',
+    shortcut: '⌫',
+    group: 'Edit',
+    contexts: ['joint'],
+    when: inDesigner,
+    run: () => void store().removeSelectedJoint(),
   })
 
   // Panels (§19.3)
@@ -72,6 +102,7 @@ export function registerViewportCommands(): void {
   registry.register({ id: 'view_iso', label: 'Isometric View', icon: 'Box', group: 'View', contexts: ['empty'], when: inDesigner, run: () => store().requestView('iso') })
   registry.register({ id: 'view_front', label: 'Front View', icon: 'Square', group: 'View', contexts: ['empty'], when: inDesigner, run: () => store().requestView('front') })
   registry.register({ id: 'view_top', label: 'Top View', icon: 'Square', group: 'View', contexts: ['empty'], when: inDesigner, run: () => store().requestView('top') })
+  registry.register({ id: 'view_right', label: 'Right View', icon: 'Square', group: 'View', contexts: ['empty'], when: inDesigner, run: () => store().requestView('right') })
 
   // Joint visualization (chunk 9 bonus stage). Explode cycles assembled → half → full
   // → assembled so it's reachable from the palette without a slider.

@@ -18,7 +18,7 @@ import type { BufferGeometry } from 'three'
 export type ViewportMode = 'select' | 'add' | 'measure'
 export type GizmoMode = 'translate' | 'rotate'
 export type DesignerPanel = 'outliner' | 'lint' | 'cutlist' | null
-export type ViewPreset = 'iso' | 'front' | 'top'
+export type ViewPreset = 'iso' | 'front' | 'top' | 'right'
 
 interface UndoEntry {
   forward: Op[]
@@ -34,6 +34,11 @@ interface ModelState {
   toast: string | null
 
   selection: string[]
+  // The selected JOINT — mutually exclusive with board `selection` (§19.3: the
+  // inspector is contextual to ONE selection state). Set by face-pick on a joint-cut
+  // face (provenance), an outliner joint row, or a lint row; cleared by any board
+  // selection change.
+  selectedJointId: string | null
   hovered: string | null
   mode: ViewportMode
   gizmoMode: GizmoMode
@@ -63,6 +68,10 @@ interface ModelState {
   snapGrid: number // inches; 0 = off (§20.5)
   scene: ViewportScene | null
   addDialogOpen: boolean
+  // Joint-creation dialog target pair (§19.2 "select two overlapping boards → J").
+  // a/b are board ids; role assignment (a receives, b inserts) is adjusted inside
+  // the dialog via swap before commit.
+  jointDialog: { a: string; b: string } | null
   // Which hit target the right-click context menu is filtered for (§19.3). Set on
   // right-button pointerdown just before the native contextmenu opens the menu.
   menuTarget: CommandContext | null
@@ -89,10 +98,16 @@ interface ModelState {
   duplicateSelected: () => Promise<void>
   groupSelected: () => Promise<void>
   ungroup: (groupId: string) => Promise<void>
+  // Joint actions (chunk 11). All go through dispatch → validated ops → undoable.
+  removeSelectedJoint: () => Promise<void>
+  toggleJointEnabled: (id: string) => Promise<void>
 
   setSelection: (ids: string[]) => void
   toggleSelection: (id: string, additive: boolean) => void
   clearSelection: () => void
+  setSelectedJoint: (id: string | null) => void
+  openJointDialog: (a: string, b: string) => void
+  closeJointDialog: () => void
   setHovered: (id: string | null) => void
   setMode: (mode: ViewportMode) => void
   setGizmoMode: (mode: GizmoMode) => void
@@ -193,6 +208,7 @@ export const useModelStore = create<ModelState>((set, get) => {
     error: null,
     toast: null,
     selection: [],
+    selectedJointId: null,
     hovered: null,
     mode: 'select',
     gizmoMode: 'translate',
@@ -207,6 +223,7 @@ export const useModelStore = create<ModelState>((set, get) => {
     snapGrid: 0.0625,
     scene: null,
     addDialogOpen: false,
+    jointDialog: null,
     menuTarget: null,
     viewRequest: { view: 'iso', n: 0 },
     undoStack: [],
@@ -223,6 +240,8 @@ export const useModelStore = create<ModelState>((set, get) => {
         loading: true,
         error: null,
         selection: [],
+        selectedJointId: null,
+        jointDialog: null,
         hovered: null,
         undoStack: [],
         redoStack: [],
@@ -315,7 +334,7 @@ export const useModelStore = create<ModelState>((set, get) => {
 
     async addBoard(board) {
       const ok = await get().dispatch([{ op: 'add_board', board }])
-      if (ok && board.id) set({ selection: [board.id], mode: 'select' })
+      if (ok && board.id) set({ selection: [board.id], selectedJointId: null, mode: 'select' })
     },
 
     async removeSelected() {
@@ -377,15 +396,33 @@ export const useModelStore = create<ModelState>((set, get) => {
       await get().dispatch([{ op: 'ungroup', group_id: groupId }])
     },
 
-    setSelection: (ids) => set({ selection: ids }),
+    async removeSelectedJoint() {
+      const id = get().selectedJointId
+      if (!id) return
+      const ok = await get().dispatch([{ op: 'remove_joint', id }])
+      if (ok) set({ selectedJointId: null })
+    },
+
+    async toggleJointEnabled(id) {
+      const joint = get().model?.joints.find((j) => j.id === id)
+      if (!joint) return
+      await get().dispatch([{ op: 'update_joint', id, patch: { enabled: !joint.enabled } }])
+    },
+
+    // Board selection and joint selection are mutually exclusive (§19.3): every
+    // board-selection change drops the joint, and selecting a joint drops boards.
+    setSelection: (ids) => set({ selection: ids, selectedJointId: null }),
     toggleSelection: (id, additive) =>
       set((s) => {
-        if (!additive) return { selection: [id] }
+        if (!additive) return { selection: [id], selectedJointId: null }
         return s.selection.includes(id)
-          ? { selection: s.selection.filter((x) => x !== id) }
-          : { selection: [...s.selection, id] }
+          ? { selection: s.selection.filter((x) => x !== id), selectedJointId: null }
+          : { selection: [...s.selection, id], selectedJointId: null }
       }),
-    clearSelection: () => set({ selection: [] }),
+    clearSelection: () => set({ selection: [], selectedJointId: null }),
+    setSelectedJoint: (id) => set(id ? { selectedJointId: id, selection: [] } : { selectedJointId: null }),
+    openJointDialog: (a, b) => set({ jointDialog: { a, b } }),
+    closeJointDialog: () => set({ jointDialog: null }),
     setHovered: (id) => set({ hovered: id }),
     setMode: (mode) => set({ mode }),
     setGizmoMode: (gizmoMode) => set({ gizmoMode }),

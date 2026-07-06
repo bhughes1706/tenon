@@ -1,8 +1,79 @@
 # Tenon — Agent Handoff Document
 
-**Date:** 2026-07-02 (off-axis geometry COMPLETE — see below; chunk 11 = joint dialog / lint-resolve is next)  
+**Date:** 2026-07-02 (chunk 11 COMPLETE — joint dialog / face-pick / lint-resolve / MCP model loop / render_view; chunk 12 = photo capture is next)  
 **Repo:** https://github.com/bhughes1706/tenon  
-**Spec:** `/Users/Brian/Downloads/tenon-spec-v0.4.md` (always load this — it is the ground truth)
+**Spec:** `docs/tenon-spec-v0.4.md` (always load this — it is the ground truth)
+
+---
+
+## ✅ CHUNK 11 — COMPLETE (2026-07-02)
+
+**Read `docs/chunk11-design.md` before extending any of this.** Owner-approved scope
+(2026-07-02): face-click provenance picking INCLUDED; the FULL MCP model loop pulled
+forward from chunk 13; live preview = a separate mini-viewport (not an in-scene ghost).
+
+1. **Joint selection is real.** `store.selectedJointId` — mutually exclusive with board
+   `selection` (either sets, the other clears). Sources: **face-pick** (plain click on a
+   joint-cut face in the viewport resolves `event.faceIndex` → `userData.provenance` →
+   `features[i].jointId` — `viewport/jointPick.ts pickJoint`, box-fallback safe, additive
+   clicks stay board-select), the Outliner's new **Joints section**, and clickable **lint
+   rows**. Right-click on a joint face → `menuTarget:'joint'` (`CommandContext` += 'joint';
+   commands `joint_toggle_enabled` + `joint_delete`). Esc clears joint before boards; ⌫
+   deletes the selected joint. Selected-joint faces tint amber + selection outline
+   (`extractJointFaces` per board, dispose-on-replace via ref inside `useMemo`).
+2. **JointInspector** (Inspector branches on selectedJointId): type label, a/b links
+   (roles per §3.2: a receives, b inserts — `lib/jointTypes.ts JOINT_ROLE_HINTS`),
+   enabled toggle, per-type **`JointParamsForm`** (shared with the dialog; commit-per-field
+   `update_joint`, undoable), this joint's lint, delete. Only params the JointFns consume
+   are shown; deferred ones (M&T haunch/wedged/drawbore/twin, housing shoulder) are hidden.
+   **Known limitation: a set param can't return to "auto"** (merge patch can't delete a
+   key; zod rejects null) — delete + recreate the joint.
+3. **JointDialog** (`ui/JointDialog.tsx`) — opens via `J` (2 boards selected), the
+   context menu, or the lint panel's **"Resolve as joint…"** button on an
+   UNRESOLVED_COLLISION row (the §13 primary joint path). Type picker pre-filtered by
+   live `checkJointPrecondition` (disabled types show the teaching reason; box/dovetail/
+   miter listed struck-through); preselect = first passing of
+   [M&T, housing, half_lap, bridle, rabbet, butt]; ⇄ swap re-runs preconditions.
+   **Mini-viewport live preview**: candidate 2-board model carved through the SAME
+   geometryClient worker (debounced 150 ms; `CarvedBoard.highlight` = the pending joint's
+   faces, amber); shows worker joint lint + a "✓ resolves the collision" line
+   (`recomputeWarnings` on the full model + pending joint). Commit parses params through
+   `JOINT_PARAM_SCHEMAS[type]` first so optimistic defaults match the server (gotcha #10),
+   dispatches `add_joint` with explicit `makeJointId()`, selects the new joint.
+4. **Server refactor:** the §4.2 ops pipeline moved VERBATIM from `routes/models.ts` into
+   **`lib/modelService.ts`** (`loadModel/createModel/listModels/applyOpsCommit/
+   loadCutlistOpts/getCutlist/validateModel`); routes are thin adapters; **the MCP tools
+   call the same functions** — REST and MCP cannot drift. 11 integration tests
+   (`modelService.test.ts`, temp-dir sqlite) incl. rev conflict, name-column sync,
+   snapshot-at-25, and joint-clears-collision.
+5. **MCP model loop (§11.2/§11.4) registered** — `list_models`, `get_model`,
+   `create_model`, `apply_model_ops` (ops enter as unknown[]; validateOps step 1 IS the
+   parse; returns the §4.2 OpResult verbatim — ok:false is a teaching response, not an
+   MCP error), `get_cutlist`, `validate_model`, `render_view`. MCP total: **15 tools**.
+6. **render_view (§11.3) works end-to-end** (curl-verified: 900×675 PNG, ~4 s cold /
+   ~1 s warm). `DesignerPage` + `?render=<iso|front|top|right>&hl=<ids>` →
+   `ui/RenderShell.tsx` (viewport only, no chrome/SSE; flips
+   `window.__tenonRenderReady` when `meshes.size === boards.length` + 2 rAFs; measure
+   mode so a single highlight doesn't summon the gizmo). Server `lib/renderView.ts`:
+   lazy singleton Puppeteer (swiftshader, --no-sandbox), serialized queue, screenshots
+   the canvas of the server's OWN SPA. Route `GET /api/models/:id/render.png` (+10/min
+   limiter, §16.6) + the MCP tool. `'right'` added to ViewPreset/VIEW_DIRS/commands.
+
+**Chunk-11 gotchas:**
+- **render_view needs the BUILT web next to the server** (`dist/web` in deploy layout).
+  Locally: `packages/server/web → ../web/dist` symlink (gitignored) after
+  `pnpm --filter @tenon/web build`. `vite dev` can NOT serve render mode.
+- **`puppeteer` is pinned exactly (25.3.0)** per §16.5. First `npm install --omit=dev`
+  on the mini PC downloads Chromium (~170 MB) + needs the usual shared libs
+  (`apt` one-liner per spec §16.5) — check the first post-deploy render.
+- **JointDialog carves preview candidates through the shared worker/eval-cache** —
+  it evicts the cache entries for the two boards (keyed on cutters), so the next main
+  re-carve recomputes just those (~ms). Don't "fix" by spawning a second worker.
+- **geometryClient is now statically imported from the designer chunk** (JointDialog).
+  Rollup folds THREE into the geometryClient chunk; main index bundle is UNCHANGED
+  (404 KB, 0 manifold / 0 BufferGeometry — invariant re-verified).
+
+**Counts after chunk 11:** core **157** (+1 skipped bench) · server **27** · web **89**.
 
 ---
 
@@ -104,9 +175,8 @@ missing from Settings.
 
 Cut list, **minimal-engine scope** (owner's call): §7 rules — rough stock, board feet / ft²,
 waste factor, species cost, machining notes, grouping. **Read `docs/chunk10-design.md`** before
-extending it. **Deferred:** glue-up strip math + panel movement auto-sizing (spec §15), and the
-`get_cutlist` MCP tool (lands with `get_model`/`apply_model_ops`, which are still NOT registered
-in `mcp/server.ts` despite older notes — only the 8 jobs/photos tools are).
+extending it. **Deferred:** glue-up strip math + panel movement auto-sizing (spec §15). (The
+`get_cutlist`/`get_model`/`apply_model_ops` MCP tools landed in chunk 11.)
 
 **One-line architecture:** `generateCutlist(model, opts)` is **WASM-free on base `@tenon/core`**
 (`src/cutlist/`), so the **same fn runs client-side in the live panel AND server-side in the REST
@@ -150,11 +220,11 @@ Chunk 9 (geometry evaluator) shipped in the 5 stages of `docs/chunk9-design.md` 
 ### Verify current state
 ```bash
 corepack pnpm --filter @tenon/core build      # build first — web/server depend on dist
-corepack pnpm --filter @tenon/core typecheck && corepack pnpm --filter @tenon/core test     # 150 pass (+1 perf.bench skipped)
-corepack pnpm --filter @tenon/web typecheck   && corepack pnpm --filter @tenon/web test      # 77 pass
-corepack pnpm --filter @tenon/server typecheck && corepack pnpm --filter @tenon/server test  # 16 pass
+corepack pnpm --filter @tenon/core typecheck && corepack pnpm --filter @tenon/core test     # 157 pass (+1 perf.bench skipped)
+corepack pnpm --filter @tenon/web typecheck   && corepack pnpm --filter @tenon/web test      # 89 pass
+corepack pnpm --filter @tenon/server typecheck && corepack pnpm --filter @tenon/server test  # 27 pass
 corepack pnpm --filter @tenon/server build && grep -ci manifold packages/server/dist/index.js  # → 0 (§6 invariant)
-corepack pnpm --filter @tenon/web build        # prod build: emits geometry.worker + manifold.wasm assets; main bundle stays 402 KB (no THREE/WASM)
+corepack pnpm --filter @tenon/web build        # prod build: emits geometry.worker + manifold.wasm assets; main bundle stays ~404 KB (no THREE/WASM)
 ```
 Counts: core **117** (Stage 4 added 24 property + 6 golden; Stage 5 added 5 memo tests + 1 gated `perf.bench`); web **65** (unchanged); server **16**. **Server bundle has 0 manifold refs**; web **main `index` bundle has 0 manifold / 0 `BufferGeometry`** (THREE is code-split into `three.core` + `geometry.worker` + the `manifold.wasm` asset) — design §6 invariant holds.
 
@@ -267,9 +337,9 @@ DEPLOYMENT.md      — first-time mini-PC setup reference
 corepack pnpm --filter @tenon/core typecheck
 corepack pnpm --filter @tenon/server typecheck
 corepack pnpm --filter @tenon/web typecheck
-corepack pnpm --filter @tenon/core test      # 151 tests (150 pass + 1 perf.bench skipped)
-corepack pnpm --filter @tenon/server test    # 16 tests
-corepack pnpm --filter @tenon/web test       # 77 tests (jsdom)
+corepack pnpm --filter @tenon/core test      # 158 tests (157 pass + 1 perf.bench skipped)
+corepack pnpm --filter @tenon/server test    # 27 tests
+corepack pnpm --filter @tenon/web test       # 89 tests (jsdom)
 ./deploy/deploy.sh                           # full build + deploy to mini-canterbury
 ```
 
@@ -305,8 +375,7 @@ Core has **no DOM, no Node-only APIs** — runs identically in browser worker an
 
 **MCP server** (`src/mcp/server.ts`):
 - Transport: Streamable HTTP (`@modelcontextprotocol/sdk`)
-- Tools registered (8 total — jobs/photos only): `list_jobs`, `get_job`, `create_job`, `update_job`, `log_note`, `log_time`, `get_photos`, `upload_photo`
-- **Model tools (`get_model`, `apply_model_ops`, `get_cutlist`) are NOT yet registered** — planned for chunk 13 (§11 Phase 3). The REST pipeline (`/api/models/:id/ops`) is fully built and tested; it just has no MCP surface yet.
+- Tools registered (15 total): jobs/photos — `list_jobs`, `get_job`, `create_job`, `update_job`, `log_note`, `log_time`, `get_photos`, `upload_photo`; model loop (chunk 11, §11.2/§11.4) — `list_models`, `get_model`, `create_model`, `apply_model_ops`, `get_cutlist`, `validate_model`, `render_view`. Model tools are thin adapters over `lib/modelService.ts` — the same §4.2 pipeline the REST routes use.
 - All writes appended to `~/data/mcp-audit.log` (pino NDJSON)
 - Rate limited: 60 req/min global cap (Tailscale proxies to localhost so req.ip is always 127.0.0.1)
 - Auth: `src/middleware/bearerAuth.ts` — reads `Authorization: Bearer <token>`, compares to `MCP_BEARER_TOKEN` env var with timing-safe compare
@@ -427,8 +496,8 @@ This does not block chunk 9. It can be applied as a one-commit patch at any poin
 | ~~8~~ | ~~Snapping (face/edge/end magnetism), collision broadphase, outliner tree, context menu~~ | **DONE** |
 | ~~9~~ | ~~Manifold WASM geometry evaluator in web worker; joint evaluation pipeline; housing/rabbet/half-lap/bridle/butt/M&T (box/dovetail deferred)~~ | **DONE** |
 | ~~10~~ | ~~Cut list (board → rough stock → waste factors), species cost, materials summary~~ | **DONE** (minimal-engine scope; glue-up/movement + `get_cutlist` MCP deferred) |
-| **11** | **Joint dialog + lint resolve flow; `render_view` MCP tool** | 9 — **NEXT CHUNK** |
-| 12 | Photo capture tab (camera API, phone-first) | 6 |
+| ~~11~~ | ~~Joint dialog + lint resolve flow; face-pick; MCP model loop; `render_view`~~ | **DONE** |
+| **12** | **Photo capture tab (camera API, phone-first)** | 6 — **NEXT CHUNK** |
 | 13 | Bid engine (materials + hardware + labor + overhead + margin), `estimate_bid` MCP tool | 10 |
 | 14–18 | Settings screen full impl, 3D print export (3MF), co-designer polish, doc migrations | various |
 

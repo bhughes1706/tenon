@@ -4,6 +4,7 @@ import { OrbitControls, TransformControls, Line, Html } from '@react-three/drei'
 import * as THREE from 'three'
 import type { Board } from '@tenon/core'
 import { worldAABB } from '@tenon/core'
+import { pickJoint, extractJointFaces } from './jointPick.js'
 import { useModelStore } from '../lib/modelStore.js'
 import { setViewportScene, syncViewportTheme } from '../lib/syncViewportTheme.js'
 import { speciesColor } from '../lib/speciesColors.js'
@@ -23,10 +24,11 @@ const voidRaycast = () => null
 // the feel is constant across zoom (§13 snapping). Tunable.
 const SNAP_PX = 8
 
-const VIEW_DIRS: Record<'iso' | 'front' | 'top', [number, number, number]> = {
+const VIEW_DIRS: Record<'iso' | 'front' | 'top' | 'right', [number, number, number]> = {
   iso: [1, 0.8, 1],
   front: [0, 0, 1],
   top: [0, 1, 0.0001],
+  right: [1, 0, 0],
 }
 
 // ── One board ────────────────────────────────────────────────────────────────
@@ -35,6 +37,7 @@ function BoardMesh({
   carved,
   highlight,
   showHighlight,
+  selectedJointId,
   ghosted,
   ghostOpacity,
   offset,
@@ -50,6 +53,9 @@ function BoardMesh({
   // Joint-face overlay geometry for this board (bonus stage), or undefined if none.
   highlight: THREE.BufferGeometry | undefined
   showHighlight: boolean
+  // The globally selected joint (chunk 11): if this board is its a or b, the joint's
+  // faces get a tint + outline (extracted per board from provenance below).
+  selectedJointId: string | null
   // Isolate mode (bonus stage): this board is a non-selected neighbour that should fade
   // so the selection reads against it; ghostOpacity is how faint.
   ghosted: boolean
@@ -66,6 +72,17 @@ function BoardMesh({
   const [rx, ry, rz] = board.transform.rot
   const [px, py, pz] = board.transform.pos
   const color = useMemo(() => speciesColor(board.species), [board.species])
+
+  // Faces of the SELECTED joint on this board (null unless this board is its a/b).
+  // Dispose-on-replace via ref rather than an effect cleanup (gotcha #12): dispose()
+  // only frees GPU buffers — if a concurrent render is discarded mid-flight the
+  // worst case is a one-frame re-upload, never a crash.
+  const jointHiRef = useRef<THREE.BufferGeometry | null>(null)
+  const selectedJointGeom = useMemo(() => {
+    jointHiRef.current?.dispose()
+    jointHiRef.current = selectedJointId && carved ? extractJointFaces(carved, selectedJointId) : null
+    return jointHiRef.current
+  }, [carved, selectedJointId])
   // Flat box fallback while the worker carves (or for joint-free boards). Not manually
   // disposed: R3F tears down the WebGL context on Canvas unmount (freeing the buffers),
   // and disposing a useMemo'd object in an effect cleanup is unsafe under StrictMode.
@@ -125,6 +142,17 @@ function BoardMesh({
       {showHighlight && highlight && (
         <mesh geometry={highlight} material={resources.jointMat} raycast={voidRaycast} />
       )}
+      {/* Selected-joint faces (chunk 11 face-pick): amber tint + selection-colored
+          outline so ONE joint reads distinctly even when the global overlay is on. */}
+      {selectedJointGeom && (
+        <>
+          <mesh geometry={selectedJointGeom} material={resources.jointMat} raycast={voidRaycast} />
+          <lineSegments raycast={voidRaycast}>
+            <edgesGeometry args={[selectedJointGeom]} />
+            <primitive object={resources.selectionMat} attach="material" />
+          </lineSegments>
+        </>
+      )}
       {(selected || hovered) && (
         <lineSegments raycast={voidRaycast}>
           <edgesGeometry args={[geom]} />
@@ -179,6 +207,7 @@ function SceneContents({
   const meshes = useModelStore((s) => s.meshes)
   const jointMeshes = useModelStore((s) => s.jointMeshes)
   const selection = useModelStore((s) => s.selection)
+  const selectedJointId = useModelStore((s) => s.selectedJointId)
   const hovered = useModelStore((s) => s.hovered)
   const mode = useModelStore((s) => s.mode)
   const gizmoMode = useModelStore((s) => s.gizmoMode)
@@ -255,12 +284,23 @@ function SceneContents({
 
   const onPointerDown = useCallback(
     (e: ThreeEvent<PointerEvent>, id: string) => {
+      // Face-pick (chunk 11): which joint, if any, owns the clicked triangle. The
+      // carved geometry is de-indexed soup, so raycast faceIndex IS the triangle
+      // index into userData.provenance; the flat-box fallback has no provenance
+      // and resolves to null (board selection, as before).
+      const clickedJoint = pickJoint((e.object as THREE.Mesh).geometry as THREE.BufferGeometry, e.faceIndex)
+
       if (e.nativeEvent.button === 2) {
-        // Right-click targets this board for the context menu (§19.3) without
-        // disturbing a multi-selection that already includes it. The native
-        // contextmenu fires next and opens the Radix menu against menuTarget.
+        // Right-click targets this board (or joint face) for the context menu
+        // (§19.3) without disturbing a multi-selection that already includes it.
+        // The native contextmenu fires next and opens the Radix menu.
         e.stopPropagation()
         const st = useModelStore.getState()
+        if (clickedJoint) {
+          st.setSelectedJoint(clickedJoint)
+          st.setMenuTarget('joint')
+          return
+        }
         if (!st.selection.includes(id)) st.setSelection([id])
         st.setMenuTarget(useModelStore.getState().selection.length > 1 ? 'multi' : 'board')
         return
@@ -274,6 +314,13 @@ function SceneContents({
       if (m === 'select') {
         e.stopPropagation()
         const additive = e.nativeEvent.shiftKey || e.nativeEvent.metaKey || e.nativeEvent.ctrlKey
+        // A plain click on a joint-cut face selects the JOINT (§13 face-click →
+        // joint). Additive clicks keep board multi-select semantics — joint pick
+        // is single-select only.
+        if (!additive && clickedJoint) {
+          useModelStore.getState().setSelectedJoint(clickedJoint)
+          return
+        }
         useModelStore.getState().toggleSelection(id, additive)
       }
     },
@@ -386,6 +433,7 @@ function SceneContents({
           carved={meshes.get(b.id)}
           highlight={jointMeshes.get(b.id)}
           showHighlight={highlightJoints}
+          selectedJointId={selectedJointId}
           ghosted={isolateActive && !selection.includes(b.id)}
           ghostOpacity={ghostOpacity}
           offset={explodeOffsets.get(b.id) ?? ZERO_OFFSET}

@@ -9,6 +9,10 @@ import { getDb } from '../db.js'
 import { emitSse } from '../sse.js'
 import { processPhoto } from '../lib/processPhoto.js'
 import {
+  applyOpsCommit, createModel, getCutlist, listModels, loadModel, validateModel,
+} from '../lib/modelService.js'
+import { renderModelView, RENDER_VIEWS } from '../lib/renderView.js'
+import {
   makeJobId, makeClientId, makeNoteId, makeTimeLogId, makePhotoId,
 } from '@tenon/core'
 
@@ -256,6 +260,109 @@ function buildMcpServer(auditLog: pino.Logger, dataDir: string): McpServer {
     }
     emitSse('photo_added', { job_id, photo_id: photoId })
     return { content: [text(db.prepare('SELECT * FROM photos WHERE id = ?').get(photoId))] }
+  })
+
+  // ── Model tools (§11.2 / §11.4 — the parametric edit loop) ─────────────────
+  // All of these are thin adapters over lib/modelService.ts — the SAME pipeline
+  // the REST routes use, so the §4.2 response shape can't drift between surfaces.
+
+  // ── list_models ───────────────────────────────────────────────────────────
+  server.registerTool('list_models', {
+    description: 'List parametric models with board/joint counts. Optionally filter by job_id.',
+    inputSchema: { job_id: z.string().optional() },
+  }, async ({ job_id }) => {
+    return { content: [text(listModels(job_id))] }
+  })
+
+  // ── get_model ─────────────────────────────────────────────────────────────
+  server.registerTool('get_model', {
+    description: 'Get a model document (§3): boards (dims/species/transform/edge_grooves), joints (type/a/b/params/enabled), groups, rev. Use the returned rev as expected_rev for apply_model_ops.',
+    inputSchema: { model_id: z.string() },
+  }, async ({ model_id }) => {
+    const model = loadModel(model_id)
+    if (!model) return err('model not found — use list_models for valid ids')
+    return { content: [text(model)] }
+  })
+
+  // ── create_model ──────────────────────────────────────────────────────────
+  server.registerTool('create_model', {
+    description: 'Create an empty parametric model, optionally attached to a job. Returns the model row incl. id and rev 0.',
+    inputSchema: { name: z.string().min(1), job_id: z.string().optional() },
+  }, async ({ name, job_id }) => {
+    auditLog.info({ tool: 'create_model', name, job_id }, 'mcp mutating call')
+    return { content: [text(createModel(name, job_id ?? null).row)] }
+  })
+
+  // ── apply_model_ops ───────────────────────────────────────────────────────
+  server.registerTool('apply_model_ops', {
+    description:
+      'Apply a validated op batch to a model (add_board, update_board, transform_board, remove_board, ' +
+      'add_joint, update_joint, remove_joint, group, ungroup, set_model_meta). expected_rev must equal ' +
+      'the current rev (optimistic concurrency — refetch via get_model on conflict). The batch is ' +
+      'transactional: any invalid op rejects the whole batch with teaching errors (§4.2). The response ' +
+      'is the §4.2 OpResult: {ok, rev, applied, warnings, errors} — ok:false explains exactly what was ' +
+      'wrong; warnings are persistent lint (unresolved collisions, failed joint preconditions).',
+    inputSchema: {
+      model_id: z.string(),
+      expected_rev: z.number().int().nonnegative(),
+      // Parsing the ops IS validation step 1 (core validateOps) — accept raw JSON here
+      // so its teaching per-op errors reach the caller instead of a generic shape error.
+      ops: z.array(z.record(z.unknown())).min(1),
+    },
+  }, async ({ model_id, expected_rev, ops }) => {
+    auditLog.info({ tool: 'apply_model_ops', model_id, expected_rev, op_count: ops.length }, 'mcp mutating call')
+    const outcome = applyOpsCommit(model_id, expected_rev, ops)
+    if (!outcome) return err('model not found — use list_models for valid ids')
+    // ok:false is a VALID, teaching response Claude should read and self-correct
+    // from (§11.4) — not an MCP-level error.
+    return { content: [text(outcome.result)] }
+  })
+
+  // ── get_cutlist ───────────────────────────────────────────────────────────
+  server.registerTool('get_cutlist', {
+    description: 'Cut list for a model (§7): per-board rows (finished/rough dims, board feet, machining notes), per-species materials with waste factor + cost, and the total material cost.',
+    inputSchema: { model_id: z.string() },
+  }, async ({ model_id }) => {
+    const result = getCutlist(model_id)
+    if (!result) return err('model not found — use list_models for valid ids')
+    return { content: [text(result)] }
+  })
+
+  // ── validate_model ────────────────────────────────────────────────────────
+  server.registerTool('validate_model', {
+    description: 'Run the lint pass over a model without editing it — returns the persistent analytic warnings (UNRESOLVED_COLLISION pairs, JOINT_PRECONDITION_FAILED joints).',
+    inputSchema: { model_id: z.string() },
+  }, async ({ model_id }) => {
+    const result = validateModel(model_id)
+    if (!result) return err('model not found — use list_models for valid ids')
+    return { content: [text(result)] }
+  })
+
+  // ── render_view ───────────────────────────────────────────────────────────
+  server.registerTool('render_view', {
+    description:
+      'Render a model to a PNG image (§11.3) — the same R3F scene the designer shows, with carved ' +
+      'joinery. view: iso|front|top|right. highlight: optional board ids to outline. ~1–2s per render.',
+    inputSchema: {
+      model_id: z.string(),
+      view: z.enum(RENDER_VIEWS).default('iso'),
+      highlight: z.array(z.string()).optional(),
+      width: z.number().int().min(200).max(1600).default(900),
+    },
+  }, async ({ model_id, view, highlight, width }) => {
+    if (!loadModel(model_id)) return err('model not found — use list_models for valid ids')
+    let png: Buffer
+    try {
+      png = await renderModelView({ modelId: model_id, view, highlight, width })
+    } catch (e) {
+      return err(`render failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    return {
+      content: [
+        text({ model_id, view, width }),
+        { type: 'image', data: png.toString('base64'), mimeType: 'image/png' },
+      ],
+    }
   })
 
   return server

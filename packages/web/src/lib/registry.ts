@@ -16,9 +16,9 @@ export interface AppCtx {
 }
 
 // Right-click hit targets (§19.3). A command tagged with a context appears in the
-// context menu for that target; the palette ignores `contexts` entirely. Joint
-// targets arrive once joints are clickable (ch.9/11).
-export type CommandContext = 'board' | 'multi' | 'empty'
+// context menu for that target; the palette ignores `contexts` entirely. 'joint'
+// fires when a joint-cut face is right-clicked (provenance pick, chunk 11).
+export type CommandContext = 'board' | 'multi' | 'empty' | 'joint'
 
 export interface Command {
   id: string

@@ -1,8 +1,10 @@
-import { Trash2, Lock, Unlock } from 'lucide-react'
-import type { Board, Op } from '@tenon/core'
+import { Trash2, Lock, Unlock, Link2, Link2Off } from 'lucide-react'
+import type { Board, Joint, Op } from '@tenon/core'
 import { useModelStore } from '../lib/modelStore.js'
 import { useSpecies } from '../lib/speciesApi.js'
 import { InchInput } from './InchInput.js'
+import { JointParamsForm } from './JointParamsForm.js'
+import { JOINT_TYPE_LABELS, JOINT_ROLE_HINTS } from '../lib/jointTypes.js'
 
 const sectionLabel = {
   fontSize: 'var(--text-xs)',
@@ -171,6 +173,90 @@ function BoardInspector({ board, precision }: { board: Board; precision: number 
   )
 }
 
+// §19.3 "Joint selected → joint type label, params form" (face-pick / outliner /
+// lint row all land here via store.selectedJointId). Every edit dispatches an
+// update_joint through the validated pipeline, so it's undoable like any op.
+function JointInspector({ joint, precision }: { joint: Joint; precision: number }) {
+  const model = useModelStore((s) => s.model)
+  const dispatch = useModelStore((s) => s.dispatch)
+  const setSelection = useModelStore((s) => s.setSelection)
+  const removeSelectedJoint = useModelStore((s) => s.removeSelectedJoint)
+  const toggleJointEnabled = useModelStore((s) => s.toggleJointEnabled)
+  const warnings = useModelStore((s) => s.warnings)
+  const jointWarnings = useModelStore((s) => s.jointWarnings)
+
+  const boardName = (id: string) => model?.boards.find((b) => b.id === id)?.name ?? id
+  const jointLint = [...warnings, ...jointWarnings].filter((w) => w.joints?.includes(joint.id))
+  const roles = JOINT_ROLE_HINTS[joint.type]
+
+  const boardLink = (id: string, role: string) => (
+    <button
+      onClick={() => setSelection([id])}
+      title={`Select ${boardName(id)} (${role})`}
+      style={{
+        border: 'none', background: 'transparent', cursor: 'pointer', padding: 0,
+        color: 'var(--accent)', fontSize: 'var(--text-sm)', fontFamily: 'inherit',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}
+    >{boardName(id)}</button>
+  )
+
+  return (
+    <>
+      <Section title="Joint">
+        <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text)', fontWeight: 600 }}>
+          {JOINT_TYPE_LABELS[joint.type]}
+          {!joint.enabled && <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> · disabled</span>}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', fontSize: 'var(--text-sm)' }}>
+          <span style={fieldLabel} title={roles.a}>a</span>
+          {boardLink(joint.a, roles.a)}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', fontSize: 'var(--text-sm)' }}>
+          <span style={fieldLabel} title={roles.b}>b</span>
+          {boardLink(joint.b, roles.b)}
+        </div>
+      </Section>
+
+      <Section title="Parameters">
+        <JointParamsForm
+          type={joint.type}
+          params={joint.params as Record<string, unknown>}
+          precision={precision}
+          onPatch={(patch) => void dispatch([{ op: 'update_joint', id: joint.id, patch: { params: patch } }])}
+        />
+      </Section>
+
+      {jointLint.length > 0 && (
+        <Section title="Lint">
+          {jointLint.map((w, i) => (
+            <div key={i} style={{ fontSize: 'var(--text-xs)', color: 'var(--warn)' }}>
+              <b>{w.code}</b> — {w.msg}
+            </div>
+          ))}
+        </Section>
+      )}
+
+      <Section title="Actions">
+        <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
+          <button
+            onClick={() => void toggleJointEnabled(joint.id)}
+            style={actionBtn(!joint.enabled)}
+            title={joint.enabled ? 'Disable — keep the joint but skip its carve' : 'Re-enable the carve'}
+          >
+            {joint.enabled ? <Link2 size={13} /> : <Link2Off size={13} />}
+            {joint.enabled ? 'Disable' : 'Enable'}
+          </button>
+          <button onClick={() => void removeSelectedJoint()} style={actionBtn(false, true)} title="Delete joint (⌫)">
+            <Trash2 size={13} />
+            Delete
+          </button>
+        </div>
+      </Section>
+    </>
+  )
+}
+
 function actionBtn(active: boolean, danger = false): React.CSSProperties {
   return {
     display: 'flex',
@@ -191,7 +277,14 @@ function actionBtn(active: boolean, danger = false): React.CSSProperties {
 export function Inspector({ precision }: { precision: number }) {
   const model = useModelStore((s) => s.model)
   const selection = useModelStore((s) => s.selection)
+  const selectedJointId = useModelStore((s) => s.selectedJointId)
   const removeSelected = useModelStore((s) => s.removeSelected)
+
+  // Joint selection wins (it's mutually exclusive with board selection in the store).
+  const selectedJoint = selectedJointId ? model?.joints.find((j) => j.id === selectedJointId) : undefined
+  if (selectedJoint) {
+    return <JointInspector joint={selectedJoint} precision={precision} />
+  }
 
   const selectedBoards = model?.boards.filter((b) => selection.includes(b.id)) ?? []
 
@@ -218,6 +311,7 @@ export function Inspector({ precision }: { precision: number }) {
       </div>
       <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-faint)', marginTop: 'var(--sp-2)' }}>
         Select a board to edit, or press <b>B</b> to add one.
+        Select two overlapping boards and press <b>J</b> to join them.
       </div>
     </Section>
   )

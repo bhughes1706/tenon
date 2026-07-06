@@ -1,40 +1,14 @@
 import { Router } from 'express'
+import rateLimit from 'express-rate-limit'
 import { getDb } from '../db.js'
-import { emitSse } from '../sse.js'
-import { makeModelId, ModelSchema, validateOps, recomputeWarnings, ApplyOpsRequestSchema, generateCutlist, SETTINGS_DEFAULTS } from '@tenon/core'
-import type { Model, OpResult, Warning, CutlistOpts, CutlistSpecies } from '@tenon/core'
-import { applyOps } from '../lib/applyOps.js'
+import { ApplyOpsRequestSchema } from '@tenon/core'
+import type { Model, OpResult } from '@tenon/core'
+import { applyOpsCommit, createModel, getCutlist, loadModel } from '../lib/modelService.js'
+import { renderModelView, RENDER_VIEWS, type RenderView } from '../lib/renderView.js'
 
+// Thin REST adapters over lib/modelService.ts (chunk 11) — the same service backs
+// the MCP model tools, so REST and MCP cannot drift (§11 "same §4.2 response shape").
 const router: Router = Router()
-
-// Snapshot every 25 revisions — automatic safety net (§16.2 / §9)
-const SNAPSHOT_INTERVAL = 25
-
-function makeEmptyModel(id: string, name: string): Model {
-  const now = new Date().toISOString()
-  return {
-    id,
-    rev: 0,
-    doc_version: 1,
-    name,
-    units: 'in',
-    boards: [],
-    joints: [],
-    groups: [],
-    meta: { notes: '', created_at: now, updated_at: now },
-  }
-}
-
-function loadModel(id: string): Model | null {
-  const db = getDb()
-  const row = db.prepare('SELECT doc FROM models WHERE id = ?').get(id) as { doc: string } | undefined
-  if (!row) return null
-  const parsed = ModelSchema.safeParse(JSON.parse(row.doc))
-  // Throws rather than returning null so the caller can distinguish "not found"
-  // from "exists but corrupt/unmigrated" (§16.1 migrate-on-read lands in chunk 16).
-  if (!parsed.success) throw new Error(`model ${id} doc schema mismatch — needs doc migration`)
-  return parsed.data
-}
 
 router.get('/', (req, res) => {
   const db = getDb()
@@ -54,17 +28,9 @@ router.get('/:id', (req, res) => {
 })
 
 router.post('/', (req, res) => {
-  const db = getDb()
   const { name, job_id } = req.body as Record<string, string | undefined>
   if (!name) return res.status(400).json({ error: 'name is required' })
-  const id = makeModelId()
-  const now = new Date().toISOString()
-  const model = makeEmptyModel(id, name)
-  db.prepare(
-    'INSERT INTO models (id, job_id, name, rev, doc, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, job_id ?? null, name, 0, JSON.stringify(model), now, now)
-  emitSse('model_changed', { id, event: 'created' })
-  res.status(201).json({ id, job_id: job_id ?? null, name, rev: 0, doc: model, created_at: now, updated_at: now })
+  res.status(201).json(createModel(name, job_id ?? null).row)
 })
 
 // PATCH meta only — board/joint edits go through /ops (§10)
@@ -91,13 +57,13 @@ router.patch('/:id', (req, res) => {
 
 // POST /api/models/:id/ops — the parametric edit channel (§4.2 + §10)
 router.post('/:id/ops', (req, res) => {
-  const db = getDb()
-
-  const model = loadModel(req.params.id)
-  if (!model) return res.status(404).json({ error: 'not found' })
-
+  // Body-shape validation stays at the REST boundary so a malformed request gets
+  // field-path errors; the ops themselves re-enter the service as unknown[]
+  // (validateOps step 1 is the authoritative parse for both REST and MCP).
   const bodyParse = ApplyOpsRequestSchema.safeParse(req.body)
   if (!bodyParse.success) {
+    const model = loadModel(req.params.id)
+    if (!model) return res.status(404).json({ error: 'not found' })
     const result: OpResult = {
       ok: false,
       rev: model.rev,
@@ -109,68 +75,9 @@ router.post('/:id/ops', (req, res) => {
   }
 
   const { expected_rev, ops } = bodyParse.data
-
-  // Fast pre-validation rejection — avoids paying validation cost on obvious stale reads (§3.3)
-  if (expected_rev !== model.rev) {
-    const result: OpResult = {
-      ok: false,
-      rev: model.rev,
-      applied: [],
-      warnings: [],
-      errors: [`rev conflict: expected ${expected_rev}, current is ${model.rev}`],
-    }
-    return res.status(409).json(result)
-  }
-
-  // Steps 1–2: schema + referential integrity (steps 3–4 land with chunk 9)
-  const validation = validateOps(ops, model)
-  if (!validation.ok) {
-    const result: OpResult = { ok: false, rev: model.rev, applied: [], warnings: [], errors: validation.errors }
-    return res.status(422).json(result)
-  }
-
-  const { model: updated, applied } = applyOps(validation.ops, model)
-  const now = new Date().toISOString()
-  const newRev = updated.rev
-
-  // CAS write — guards against a concurrent write landing between our load and this
-  // transaction (the fast check above is outside the transaction, so the window exists).
-  // `changes === 0` means another writer updated rev while we were validating (§3.3).
-  const committed = db.transaction((): boolean => {
-    // `set_model_meta` can change doc.name — keep the `models.name` column (used by list
-    // queries) in sync so it doesn't drift from the doc (which the designer reads).
-    const info = model.name === updated.name
-      ? db.prepare('UPDATE models SET doc = ?, rev = ?, updated_at = ? WHERE id = ? AND rev = ?')
-          .run(JSON.stringify(updated), newRev, now, req.params.id, expected_rev)
-      : db.prepare('UPDATE models SET doc = ?, rev = ?, name = ?, updated_at = ? WHERE id = ? AND rev = ?')
-          .run(JSON.stringify(updated), newRev, updated.name, now, req.params.id, expected_rev)
-    if (info.changes === 0) return false
-    if (newRev % SNAPSHOT_INTERVAL === 0) {
-      db.prepare('INSERT OR REPLACE INTO model_snapshots (model_id, rev, doc, created_at) VALUES (?, ?, ?, ?)')
-        .run(req.params.id, newRev, JSON.stringify(updated), now)
-    }
-    return true
-  })()
-
-  if (!committed) {
-    const current = db.prepare('SELECT rev FROM models WHERE id = ?').get(req.params.id) as { rev: number } | undefined
-    const result: OpResult = {
-      ok: false,
-      rev: current?.rev ?? model.rev,
-      applied: [],
-      warnings: [],
-      errors: [`rev conflict: concurrent write detected`],
-    }
-    return res.status(409).json(result)
-  }
-
-  // Step 4 (§6): the analytic lint pass over the committed model is the AUTHORITY for
-  // UNRESOLVED_COLLISION and JOINT_PRECONDITION_FAILED (no Manifold in Node — warnings,
-  // not meshes). Both are persistent model state, re-derived here on every commit.
-  const warnings: Warning[] = [...validation.warnings, ...recomputeWarnings(updated)]
-
-  emitSse('model_changed', { id: req.params.id, rev: newRev })
-  res.json({ ok: true, rev: newRev, applied, warnings, errors: [] } satisfies OpResult)
+  const outcome = applyOpsCommit(req.params.id, expected_rev, ops)
+  if (!outcome) return res.status(404).json({ error: 'not found' })
+  res.status(outcome.status).json(outcome.result)
 })
 
 // GET /api/models/:id/cutlist — §7 cut list (rows + per-species materials + total cost).
@@ -178,44 +85,35 @@ router.post('/:id/ops', (req, res) => {
 // MCP/bid/headless use. Species cost + kind come from the species table, waste factors +
 // fraction precision from settings.
 router.get('/:id/cutlist', (req, res) => {
-  const model = loadModel(req.params.id)
-  if (!model) return res.status(404).json({ error: 'not found' })
-  res.json(generateCutlist(model, loadCutlistOpts()))
+  const result = getCutlist(req.params.id)
+  if (!result) return res.status(404).json({ error: 'not found' })
+  res.json(result)
 })
 
-// Build CutlistOpts from the species table + settings (with core defaults as fallback).
-function loadCutlistOpts(): CutlistOpts {
-  const db = getDb()
-
-  const species: Record<string, CutlistSpecies> = {}
-  const rows = db.prepare('SELECT id, common_name, kind, cost_bf FROM species').all() as Array<{
-    id: string
-    common_name: string
-    kind: string
-    cost_bf: number
-  }>
-  for (const r of rows) {
-    species[r.id] = { kind: r.kind === 'sheet' ? 'sheet' : 'solid', cost_bf: r.cost_bf, common_name: r.common_name }
+// GET /api/models/:id/render.png?view=iso&w=900&highlight=brd_a,brd_b — §11.3.
+// Puppeteer renders the server's own SPA in render mode; §16.6 caps this at
+// 10/min on top of the global limit (each render costs ~1–2 s of software GL).
+const renderLimit = rateLimit({ windowMs: 60 * 1000, max: 10 })
+router.get('/:id/render.png', renderLimit, async (req, res) => {
+  // Cast: express 5's type-level path parser mis-infers `:id` followed by a
+  // `.png` literal as string|string[] — at runtime it is always a string.
+  const id = (req.params as { id: string }).id
+  if (!loadModel(id)) return res.status(404).json({ error: 'not found' })
+  const { view: rawView, w, highlight } = req.query as Record<string, string | undefined>
+  const view = (RENDER_VIEWS as readonly string[]).includes(rawView ?? 'iso') ? ((rawView ?? 'iso') as RenderView) : null
+  if (!view) return res.status(400).json({ error: `view must be one of ${RENDER_VIEWS.join('|')}` })
+  const width = Math.min(1600, Math.max(200, Number(w) || 900))
+  try {
+    const png = await renderModelView({
+      modelId: id,
+      view,
+      width,
+      highlight: highlight?.split(',').filter(Boolean),
+    })
+    res.type('png').send(png)
+  } catch (e) {
+    res.status(503).json({ error: e instanceof Error ? e.message : 'render failed' })
   }
-
-  const settings = db.prepare('SELECT key, value FROM settings').all() as { key: string; value: string }[]
-  const num = (key: string, fallback: number): number => {
-    const row = settings.find((s) => s.key === key)
-    if (!row) return fallback
-    try {
-      const v = JSON.parse(row.value) as unknown
-      return typeof v === 'number' ? v : fallback
-    } catch {
-      return fallback
-    }
-  }
-
-  return {
-    species,
-    wasteFactorSolid: num('waste_factor_solid', SETTINGS_DEFAULTS.waste_factor_solid),
-    wasteFactorSheet: num('waste_factor_sheet', SETTINGS_DEFAULTS.waste_factor_sheet),
-    fractionPrecision: num('fraction_precision', SETTINGS_DEFAULTS.fraction_precision),
-  }
-}
+})
 
 export default router
