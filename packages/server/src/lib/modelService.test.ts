@@ -4,7 +4,8 @@ import os from 'os'
 import path from 'path'
 import { openDb, getDb } from '../db.js'
 import {
-  applyOpsCommit, createModel, getCutlist, listModels, loadModel, validateModel,
+  applyOpsCommit, createModel, deleteModel, getCutlist, listModels, loadModel, updateModelMeta,
+  validateModel,
 } from './modelService.js'
 
 // Integration tests over a real temp-dir SQLite (migrations included) — this is
@@ -125,6 +126,63 @@ describe('applyOpsCommit — the §4.2 pipeline', () => {
       .prepare('SELECT rev FROM model_snapshots WHERE model_id = ?')
       .all(row.id) as { rev: number }[]
     expect(snap.map((s) => s.rev)).toEqual([25])
+  })
+})
+
+describe('updateModelMeta', () => {
+  const makeJob = (id: string) => {
+    getDb().prepare("INSERT INTO jobs (id, title, status) VALUES (?, 'Test Job', 'lead')").run(id)
+    return id
+  }
+
+  it('assigns a job, then explicit null clears it while absent leaves it untouched', () => {
+    const jobId = makeJob('job_AAAAAAAAAA')
+    const { row } = createModel('Standalone')
+    expect(row.job_id).toBeNull()
+
+    const assigned = updateModelMeta(row.id, { job_id: jobId })
+    expect(assigned).toEqual({ ok: true, row: expect.objectContaining({ job_id: jobId }) })
+
+    const renamedOnly = updateModelMeta(row.id, { name: 'Renamed' })
+    expect(renamedOnly.ok).toBe(true)
+    expect((renamedOnly as { ok: true; row: { job_id: string | null } }).row.job_id).toBe(jobId)
+    expect(loadModel(row.id)?.name).toBe('Renamed')
+
+    const cleared = updateModelMeta(row.id, { job_id: null })
+    expect(cleared.ok).toBe(true)
+    expect((cleared as { ok: true; row: { job_id: string | null } }).row.job_id).toBeNull()
+  })
+
+  it('rejects an unknown job_id', () => {
+    const { row } = createModel('Bad Job')
+    expect(updateModelMeta(row.id, { job_id: 'job_ZZZZZZZZZZ' })).toEqual({ ok: false, reason: 'unknown_job' })
+  })
+
+  it('returns not_found for an unknown model', () => {
+    expect(updateModelMeta('mdl_ZZZZZZZZZZ', { name: 'x' })).toEqual({ ok: false, reason: 'not_found' })
+  })
+})
+
+describe('deleteModel', () => {
+  it('deletes the model, its snapshots, and detaches (does not delete) hardware', () => {
+    const { row } = createModel('To Delete')
+    applyOpsCommit(row.id, 0, [{ op: 'add_board', board: BOARD_A }])
+    getDb().prepare('INSERT OR REPLACE INTO model_snapshots (model_id, rev, doc, created_at) VALUES (?, 1, ?, ?)')
+      .run(row.id, JSON.stringify(loadModel(row.id)), new Date().toISOString())
+    getDb().prepare("INSERT INTO jobs (id, title, status) VALUES ('job_HHHHHHHHHH', 'Hardware Job', 'lead')").run()
+    getDb().prepare(
+      "INSERT INTO hardware (id, job_id, model_id, item, qty) VALUES ('hw_AAAAAAAAAA', 'job_HHHHHHHHHH', ?, 'hinge', 2)"
+    ).run(row.id)
+
+    expect(deleteModel(row.id)).toBe(true)
+    expect(loadModel(row.id)).toBeNull()
+    expect(getDb().prepare('SELECT * FROM model_snapshots WHERE model_id = ?').all(row.id)).toHaveLength(0)
+    const hw = getDb().prepare('SELECT model_id FROM hardware WHERE id = ?').get('hw_AAAAAAAAAA') as { model_id: string | null }
+    expect(hw.model_id).toBeNull()
+  })
+
+  it('returns false for an unknown model', () => {
+    expect(deleteModel('mdl_ZZZZZZZZZZ')).toBe(false)
   })
 })
 

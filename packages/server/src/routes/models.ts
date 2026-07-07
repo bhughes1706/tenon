@@ -2,8 +2,10 @@ import { Router } from 'express'
 import rateLimit from 'express-rate-limit'
 import { getDb } from '../db.js'
 import { ApplyOpsRequestSchema } from '@tenon/core'
-import type { Model, OpResult } from '@tenon/core'
-import { applyOpsCommit, createModel, getCutlist, loadModel } from '../lib/modelService.js'
+import type { OpResult } from '@tenon/core'
+import {
+  applyOpsCommit, createModel, deleteModel, getCutlist, loadModel, updateModelMeta,
+} from '../lib/modelService.js'
 import { renderModelView, RENDER_VIEWS, type RenderView } from '../lib/renderView.js'
 
 // Thin REST adapters over lib/modelService.ts (chunk 11) — the same service backs
@@ -33,26 +35,29 @@ router.post('/', (req, res) => {
   res.status(201).json(createModel(name, job_id ?? null).row)
 })
 
-// PATCH meta only — board/joint edits go through /ops (§10)
+// PATCH meta only — board/joint edits go through /ops (§10). `job_id` distinguishes
+// absent (leave assignment untouched) from explicit `null` (clear it) via `in`,
+// since JSON.parse preserves an explicit null but drops an absent key.
 router.patch('/:id', (req, res) => {
-  const db = getDb()
-  const row = db.prepare('SELECT doc FROM models WHERE id = ?').get(req.params.id) as { doc: string } | undefined
-  if (!row) return res.status(404).json({ error: 'not found' })
-  const { name, job_id } = req.body as Record<string, string | undefined>
-  const now = new Date().toISOString()
-  // `name` is duplicated in the `models.name` column (for list queries) and `doc.name`
-  // (for the designer, which reads the whole doc) — keep both in sync or they drift.
-  if (name !== undefined) {
-    const doc = JSON.parse(row.doc) as Model
-    doc.name = name
-    doc.meta.updated_at = now
-    db.prepare('UPDATE models SET name = ?, job_id = COALESCE(?, job_id), doc = ?, updated_at = ? WHERE id = ?')
-      .run(name, job_id ?? null, JSON.stringify(doc), now, req.params.id)
-  } else {
-    db.prepare('UPDATE models SET job_id = COALESCE(?, job_id), updated_at = ? WHERE id = ?')
-      .run(job_id ?? null, now, req.params.id)
+  const body = req.body as Record<string, unknown>
+  const patch: { name?: string; job_id?: string | null } = {}
+  if (typeof body.name === 'string') patch.name = body.name
+  if ('job_id' in body) patch.job_id = (body.job_id as string | null | undefined) ?? null
+
+  const outcome = updateModelMeta(req.params.id, patch)
+  if (!outcome.ok) {
+    if (outcome.reason === 'not_found') return res.status(404).json({ error: 'not found' })
+    return res.status(400).json({ error: 'unknown job_id' })
   }
-  res.json(db.prepare('SELECT id, job_id, name, rev, thumbnail, created_at, updated_at FROM models WHERE id = ?').get(req.params.id))
+  res.json(outcome.row)
+})
+
+// DELETE /api/models/:id — detaches referencing hardware rows, drops snapshots,
+// removes the model. No confirmation server-side; the designer's delete menu item
+// is the confirmation surface (§ web UI).
+router.delete('/:id', (req, res) => {
+  if (!deleteModel(req.params.id)) return res.status(404).json({ error: 'not found' })
+  res.status(204).end()
 })
 
 // POST /api/models/:id/ops — the parametric edit channel (§4.2 + §10)

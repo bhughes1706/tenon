@@ -228,3 +228,64 @@ export function validateModel(modelId: string): { warnings: Warning[] } | null {
   if (!model) return null
   return { warnings: recomputeWarnings(model) }
 }
+
+// Metadata-only update (name / job assignment) — deliberately separate from the
+// §4.2 ops pipeline: it does not touch doc.boards/joints and does not bump rev.
+// `job_id: undefined` leaves the assignment untouched, `null` clears it — callers
+// (the PATCH route) must distinguish "key absent" from "key explicitly null".
+export type UpdateModelMetaResult =
+  | { ok: true; row: ModelRow }
+  | { ok: false; reason: 'not_found' | 'unknown_job' }
+
+export function updateModelMeta(
+  id: string,
+  patch: { name?: string; job_id?: string | null },
+): UpdateModelMetaResult {
+  const db = getDb()
+  const current = db.prepare('SELECT doc, job_id FROM models WHERE id = ?').get(id) as
+    | { doc: string; job_id: string | null }
+    | undefined
+  if (!current) return { ok: false, reason: 'not_found' }
+
+  if (patch.job_id != null) {
+    const job = db.prepare('SELECT id FROM jobs WHERE id = ?').get(patch.job_id)
+    if (!job) return { ok: false, reason: 'unknown_job' }
+  }
+  // better-sqlite3 rejects `undefined` bind params, so resolve "absent" to the
+  // current value up front rather than binding patch.job_id directly.
+  const nextJobId = patch.job_id !== undefined ? patch.job_id : current.job_id
+  const now = new Date().toISOString()
+
+  if (patch.name !== undefined) {
+    // `name` is duplicated in the `models.name` column (list queries) and `doc.name`
+    // (the designer reads the whole doc) — keep both in sync or they drift.
+    const doc = JSON.parse(current.doc) as Model
+    doc.name = patch.name
+    doc.meta.updated_at = now
+    db.prepare('UPDATE models SET name = ?, job_id = ?, doc = ?, updated_at = ? WHERE id = ?')
+      .run(patch.name, nextJobId, JSON.stringify(doc), now, id)
+  } else if (patch.job_id !== undefined) {
+    db.prepare('UPDATE models SET job_id = ?, updated_at = ? WHERE id = ?').run(nextJobId, now, id)
+  }
+
+  const updated = db.prepare(
+    'SELECT id, job_id, name, rev, thumbnail, created_at, updated_at FROM models WHERE id = ?'
+  ).get(id) as ModelRow
+  return { ok: true, row: updated }
+}
+
+// Deletes a model and everything that references it. `hardware.model_id` has an
+// FK (§ hardware, "NULL = job-level" — nulling preserves the hardware line, just
+// detaches it); `model_snapshots.model_id` has no FK, so it must be cleared
+// explicitly or it'd become orphaned dead rows.
+export function deleteModel(id: string): boolean {
+  const db = getDb()
+  const deleted = db.transaction((): boolean => {
+    db.prepare('UPDATE hardware SET model_id = NULL WHERE model_id = ?').run(id)
+    db.prepare('DELETE FROM model_snapshots WHERE model_id = ?').run(id)
+    const info = db.prepare('DELETE FROM models WHERE id = ?').run(id)
+    return info.changes > 0
+  })()
+  if (deleted) emitSse('model_changed', { id, event: 'deleted' })
+  return deleted
+}
