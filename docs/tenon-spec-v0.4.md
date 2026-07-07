@@ -530,13 +530,13 @@ Working pattern: plan high, execute low. For each Fable-tagged chunk, run a desi
 | 13 | `apply_model_ops`, `get_model`, `validate_model` MCP + "errors must teach" pass | 9, 4 | Opus 4.8; **Fable 5 error-quality pass** | Rejection messages determine whether the Claude edit loop converges |
 | 14 | `render_view` (Puppeteer) + thumbnails | 7 | Sonnet 4.6 | Glue code |
 | 15 | Cut list engine + **glue_up strip math** + **panel auto-sizing** (§3.4 movement gap) + printable/CSV | 10 | Sonnet 4.6 | §7 rules exact; panel math is new v0.3 addition |
-| 16 | Bid engine + **hardware line items** + estimate-vs-actual category rollup + printable bid | 15 | Sonnet 4.6 | Arithmetic + templating; hardware table now feeds bid |
-| 16.5 | **3D print export**: scale validator, `@jscadui/3mf-export` serializer, merged + parts modes, embedded slicer notes, `export_print_model` MCP tool, `/api/models/:id/export` route (§21) | 9 | Sonnet 4.6 | Fully specified; pure output formatting over existing Manifold solids |
-| 17 | Profiles (presets + SVG import) + turnings (revolve) | 9 | Opus 4.8 | Tessellation tolerances, 1:1 template output |
-| 18 | Box joint + dovetail spacing solver | 10 | **Fable 5 solver math → Opus 4.8 implement** | Two derivation problems first |
+| 16 | Box joint + dovetail spacing solver | 10 | **Fable 5 solver math → Opus 4.8 implement** | Two derivation problems first; reordered ahead of the bid engine (2026-07-07) — no dependency on 15/17, joints matter more than billing near-term |
+| 17 | Bid engine + **hardware line items** + estimate-vs-actual category rollup + printable bid | 15 | Sonnet 4.6 | Arithmetic + templating; hardware table now feeds bid |
+| 17.5 | **3D print export**: scale validator, `@jscadui/3mf-export` serializer, merged + parts modes, embedded slicer notes, `export_print_model` MCP tool, `/api/models/:id/export` route (§21) | 9 | Sonnet 4.6 | Fully specified; pure output formatting over existing Manifold solids |
+| 18 | Profiles (presets + SVG import) + turnings (revolve) | 9 | Opus 4.8 | Tessellation tolerances, 1:1 template output |
 | 19 | Polish: wood textures, movement lint, **shop-mode density** (§19), settings screen full UI, model templates | 12+ | Sonnet 4.6 / Haiku 4.5 | Incremental; shop-mode sizing validated at bench |
 
-Fable 5 touches six chunks (2-review, 9, 12, 13-pass, 18, and the §20 token system design session before chunk 5). Phase-1 survival milestone lands at chunk 4; design token foundation at chunk 5 before any component is rendered; command registry at chunk 6 before any interaction is wired.
+Fable 5 touches six chunks (2-review, 9, 12, 13-pass, 16, and the §20 token system design session before chunk 5). Phase-1 survival milestone lands at chunk 4; design token foundation at chunk 5 before any component is rendered; command registry at chunk 6 before any interaction is wired.
 
 ---
 

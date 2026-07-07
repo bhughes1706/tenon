@@ -134,7 +134,7 @@ function jointNote(joint: Joint, a: Board, b: Board, push: Push, f: (n: number) 
       }
       return
     }
-    // Not carved yet (chunk 18 / deferred) — still flag the joinery for the shop.
+    // Not carved yet (chunk 16 / deferred) — still flag the joinery for the shop.
     case 'box_joint':
       push(a.id, 'box joint')
       push(b.id, 'box joint')
