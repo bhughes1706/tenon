@@ -6,6 +6,7 @@ import {
   STATUS_LABELS, PAYMENT_LABELS,
 } from '../lib/jobsApi.js'
 import type { Job, JobDetail as JobDetailType, Hardware, Note, TimeLog, JobStatus, PaymentStatus, LaborCategory } from '../lib/jobsApi.js'
+import { ModelThumb } from '../ui/kit.js'
 
 type Tab = 'overview' | 'photos' | 'hardware' | 'feed'
 
@@ -121,7 +122,7 @@ function OverviewTab({ job, onUpdate }: { job: JobDetailType; onUpdate: (j: Job)
             fontSize: 'var(--text-sm)', color: 'var(--accent)', textDecoration: 'none',
             marginBottom: 'var(--sp-1)',
           }}>
-            <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-faint)', fontFamily: 'monospace' }}>◧</span>
+            <ModelThumb thumbnail={m.thumbnail} size={28} />
             {m.name}
             <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-faint)' }}>rev {m.rev}</span>
           </Link>
@@ -425,11 +426,16 @@ export function JobDetail() {
         // ignore malformed event payloads
       }
     }
+    // Debounced server-side thumbnail render (§15 row 14) lands a moment after
+    // the edit that triggered it — reload so it appears without a manual refresh.
+    const onModelChanged = () => void load()
     es.addEventListener('photo_added', onPhotoAdded as EventListener)
     es.addEventListener('job_changed', onJobChanged as EventListener)
+    es.addEventListener('model_changed', onModelChanged as EventListener)
     return () => {
       es.removeEventListener('photo_added', onPhotoAdded as EventListener)
       es.removeEventListener('job_changed', onJobChanged as EventListener)
+      es.removeEventListener('model_changed', onModelChanged as EventListener)
       es.close()
     }
   }, [id, load])

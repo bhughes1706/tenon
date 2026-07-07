@@ -42,6 +42,26 @@ export const Select = forwardRef<HTMLSelectElement, React.SelectHTMLAttributes<H
   },
 )
 
+// §15 row 14 — models.thumbnail is a data: URL rendered async server-side
+// (Puppeteer, debounced after edits land); it can lag a moment behind a
+// model's first geometry, so a glyph placeholder covers the gap instead of a
+// blank box. Shared by ModelsPage and JobDetail's Models section.
+export function ModelThumb({ thumbnail, size }: { thumbnail: string | null; size: number }) {
+  const style: CSSProperties = {
+    width: size, height: size, borderRadius: 'var(--radius-s)', flexShrink: 0,
+    border: '1px solid var(--border)', background: 'var(--surface-sunken)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+  }
+  if (!thumbnail) {
+    return <span style={{ ...style, color: 'var(--text-faint)', fontFamily: 'monospace', fontSize: 'var(--text-xs)' }}>◧</span>
+  }
+  return (
+    <span style={style}>
+      <img src={thumbnail} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+    </span>
+  )
+}
+
 export function Checkbox({ checked, onSet, disabled }: {
   checked: boolean
   onSet: (v: boolean) => void

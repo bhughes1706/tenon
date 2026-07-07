@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Box, Plus } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { getModels, createModel } from '../lib/jobsApi.js'
 import type { ModelMeta } from '../lib/jobsApi.js'
+import { ModelThumb } from '../ui/kit.js'
 
 export function ModelsPage() {
   const navigate = useNavigate()
@@ -16,6 +17,18 @@ export function ModelsPage() {
       .then(setModels)
       .catch(e => setError(e instanceof Error ? e.message : 'Failed to load models'))
       .finally(() => setLoading(false))
+  }, [])
+
+  // Server-side thumbnails (§15 row 14) render async after an edit lands —
+  // refresh the list so a newly-rendered thumbnail appears without a reload.
+  useEffect(() => {
+    const es = new EventSource('/api/events')
+    const onModelChanged = () => { getModels().then(setModels).catch(() => {}) }
+    es.addEventListener('model_changed', onModelChanged)
+    return () => {
+      es.removeEventListener('model_changed', onModelChanged)
+      es.close()
+    }
   }, [])
 
   const newModel = async () => {
@@ -68,7 +81,7 @@ export function ModelsPage() {
               onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface-sunken)')}
               onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
             >
-              <Box size={16} color="var(--text-faint)" />
+              <ModelThumb thumbnail={m.thumbnail} size={36} />
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 'var(--text-sm)', fontWeight: 500, color: 'var(--text)' }}>{m.name}</div>
                 <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-faint)' }}>rev {m.rev}</div>

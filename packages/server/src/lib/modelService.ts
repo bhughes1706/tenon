@@ -13,6 +13,7 @@ import {
 } from '@tenon/core'
 import type { Model, OpResult, Warning, CutlistOpts, CutlistResult, CutlistSpecies } from '@tenon/core'
 import { applyOps } from './applyOps.js'
+import { scheduleThumbnail } from './thumbnail.js'
 
 // Snapshot every 25 revisions — automatic safety net (§16.2 / §9)
 const SNAPSHOT_INTERVAL = 25
@@ -178,6 +179,8 @@ export function applyOpsCommit(
   const warnings: Warning[] = [...validation.warnings, ...recomputeWarnings(updated)]
 
   emitSse('model_changed', { id: modelId, rev: newRev })
+  // Fire-and-forget (§15 row 14) — a blank model has nothing worth a render.
+  if (applied.length > 0 && updated.boards.length > 0) scheduleThumbnail(modelId)
   return { status: 200, result: { ok: true, rev: newRev, applied, warnings, errors: [] } }
 }
 
