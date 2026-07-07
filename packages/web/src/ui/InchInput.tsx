@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { formatInches, parseInches } from '../lib/fraction.js'
+import { NumChrome } from './kit.js'
 
 // Fractional-inch text input (§2.1). Displays the reduced fraction, parses
 // 3/4 · 1-3/8 · 1.375 · 35mm on commit (blur / Enter). Rejects unparseable or
@@ -59,18 +60,7 @@ export function InchInput({
         }
         e.stopPropagation() // keep viewport hotkeys (V/B/M…) from firing while typing
       }}
-      style={{
-        width: 64,
-        background: 'var(--surface-sunken)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-s)',
-        padding: '3px var(--sp-2)',
-        fontSize: 'var(--text-sm)',
-        color: 'var(--text)',
-        fontVariantNumeric: 'tabular-nums',
-        fontFamily: 'inherit',
-        ...style,
-      }}
+      style={{ ...NumChrome, width: 64, ...style }}
     />
   )
 }

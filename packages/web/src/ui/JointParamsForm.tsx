@@ -1,5 +1,6 @@
 import { formatInches, parseInches } from '../lib/fraction.js'
 import type { JointType } from '@tenon/core'
+import { Checkbox, FormRow, NumChrome, Select } from './kit.js'
 
 // Shared per-type joint param form (chunk 11) — rendered by BOTH the JointDialog
 // (params accumulate in local state until Add) and the JointInspector (each commit
@@ -12,21 +13,14 @@ import type { JointType } from '@tenon/core'
 // Known v1 limitation: once set, a param can't return to "auto" — update_joint
 // patches merge, so a key can't be deleted (delete + recreate the joint instead).
 
-const rowStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }
-const labelStyle: React.CSSProperties = { fontSize: 'var(--text-sm)', color: 'var(--text-muted)', width: 92, flexShrink: 0 }
-const inputStyle: React.CSSProperties = {
-  width: 64, background: 'var(--surface-sunken)', border: '1px solid var(--border)',
-  borderRadius: 'var(--radius-s)', padding: '3px var(--sp-2)', fontSize: 'var(--text-sm)',
-  color: 'var(--text)', fontVariantNumeric: 'tabular-nums', fontFamily: 'inherit',
-}
-const selectStyle: React.CSSProperties = { ...inputStyle, width: undefined, flex: 1 }
+const inputStyle: React.CSSProperties = { ...NumChrome, width: 72 }
+const selectStyle: React.CSSProperties = { flex: 1 }
 
 function Row({ label, title, children }: { label: string; title?: string; children: React.ReactNode }) {
   return (
-    <div style={rowStyle} title={title}>
-      <span style={labelStyle}>{label}</span>
+    <FormRow label={label} title={title}>
       {children}
-    </div>
+    </FormRow>
   )
 }
 
@@ -82,12 +76,7 @@ function NumInput({ value, onSet, min = 0.05, max = 0.95, step = 0.05 }: {
   )
 }
 
-function Check({ checked, onSet }: { checked: boolean; onSet: (v: boolean) => void }) {
-  return (
-    <input type="checkbox" checked={checked} onChange={(e) => onSet(e.target.checked)}
-      style={{ accentColor: 'var(--accent)', cursor: 'pointer' }} />
-  )
-}
+const Check = Checkbox
 
 const num = (p: Record<string, unknown>, k: string): number | undefined =>
   typeof p[k] === 'number' ? (p[k] as number) : undefined
@@ -110,9 +99,9 @@ export function JointParamsForm({ type, params, precision, onPatch }: {
       return (
         <>
           <Row label="Fastener">
-            <select value={str(params, 'fastener') ?? 'none'} onChange={(e) => set('fastener')(e.target.value)} style={selectStyle}>
+            <Select value={str(params, 'fastener') ?? 'none'} onChange={(e) => set('fastener')(e.target.value)} style={selectStyle}>
               {['none', 'screw', 'dowel', 'domino', 'pocket_screw'].map((f) => <option key={f} value={f}>{f.replace('_', ' ')}</option>)}
-            </select>
+            </Select>
           </Row>
           {str(params, 'fastener') !== undefined && str(params, 'fastener') !== 'none' && (
             <>
@@ -166,11 +155,11 @@ export function JointParamsForm({ type, params, precision, onPatch }: {
             <NumInput value={num(params, 'split') ?? 0.5} onSet={set('split')} />
           </Row>
           <Row label="On top" title="Which board keeps its top face. Auto: derived from world height">
-            <select value={str(params, 'on_top') ?? ''} onChange={(e) => set('on_top')(e.target.value || undefined)} style={selectStyle}>
+            <Select value={str(params, 'on_top') ?? ''} onChange={(e) => set('on_top')(e.target.value || undefined)} style={selectStyle}>
               <option value="">auto</option>
               <option value="a">a</option>
               <option value="b">b</option>
-            </select>
+            </Select>
           </Row>
         </>
       )
@@ -200,7 +189,7 @@ export function JointParamsForm({ type, params, precision, onPatch }: {
             <Check checked={bool(params, 'snap_to_tool', true)} onSet={set('snap_to_tool')} />
           </Row>
           <Row label="Through" title="Auto: through when the tenon reaches a's far face">
-            <select
+            <Select
               value={typeof params.through === 'boolean' ? String(params.through) : ''}
               onChange={(e) => set('through')(e.target.value === '' ? undefined : e.target.value === 'true')}
               style={selectStyle}
@@ -208,7 +197,7 @@ export function JointParamsForm({ type, params, precision, onPatch }: {
               <option value="">auto</option>
               <option value="true">through</option>
               <option value="false">blind</option>
-            </select>
+            </Select>
           </Row>
           <Row label="Depth" title="Tenon length into a. Auto: full engagement (blind caps at tₐ−1/4)">
             <OptInch value={num(params, 'depth')} placeholder="auto" precision={precision} onSet={set('depth')} />
@@ -232,11 +221,11 @@ export function JointParamsForm({ type, params, precision, onPatch }: {
             />
           </Row>
           <Row label="Haunch" title="Stub that fills the panel-groove run-out at the stile's end (square) or hides as an anti-twist ramp (sloped)">
-            <select value={str(params, 'haunch') ?? 'none'} onChange={(e) => set('haunch')(e.target.value)} style={selectStyle}>
+            <Select value={str(params, 'haunch') ?? 'none'} onChange={(e) => set('haunch')(e.target.value)} style={selectStyle}>
               <option value="none">none</option>
               <option value="square">square</option>
               <option value="sloped">sloped</option>
-            </select>
+            </Select>
           </Row>
           {(str(params, 'haunch') ?? 'none') !== 'none' && (
             <>

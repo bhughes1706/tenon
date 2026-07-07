@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import * as Dialog from '@radix-ui/react-dialog'
 import { Canvas, useThree } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
-import { X, ArrowLeftRight } from 'lucide-react'
+import { ArrowLeftRight } from 'lucide-react'
 import {
   makeJointId, recomputeWarnings, worldAABB, checkJointPrecondition, JOINT_PARAM_SCHEMAS,
 } from '@tenon/core'
@@ -14,6 +13,7 @@ import {
 } from '../lib/jointTypes.js'
 import { JointParamsForm } from './JointParamsForm.js'
 import { speciesColor } from '../lib/speciesColors.js'
+import { Button, Chip, DialogShell, IconButton, Note } from './kit.js'
 // Static import is safe here: JointDialog lives in the code-split designer chunk
 // (imported from DesignerShell), which already carries THREE — the main
 // jobs/photos bundle is untouched. The worker still spawns lazily on first carve.
@@ -30,6 +30,11 @@ const PREVIEW_JOINT_ID = 'jnt_PREVIEW000'
 // GEOMETRY lint (thin tenon, near-through …). A raw a/b collision is expected here —
 // resolving it is the whole point.
 const ANALYTIC_CODES = new Set(['UNRESOLVED_COLLISION', 'JOINT_PRECONDITION_FAILED'])
+
+// Preview viewport height is user-draggable; remember it across dialog opens
+// (session-scoped — no reason to persist a window-size-relative value).
+const VP_MIN_HEIGHT = 160
+let lastPreviewHeight = 280
 
 interface Preview {
   boards: CarvedBoard[]
@@ -209,6 +214,15 @@ function JointDialogBody({ model, initialA, initialB, precision, onClose }: {
     [],
   )
 
+  // ── Drag-resizable preview height (grip strip under the viewport) ──
+  const [vpHeight, setVpHeight] = useState(lastPreviewHeight)
+  const dragRef = useRef<{ y: number; h: number } | null>(null)
+  const resizeTo = (h: number) => {
+    const clamped = Math.round(Math.min(Math.max(h, VP_MIN_HEIGHT), window.innerHeight * 0.6))
+    lastPreviewHeight = clamped
+    setVpHeight(clamped)
+  }
+
   if (!a || !b) return null // a board vanished mid-dialog (remote edit) — shell closes us
   const roles = type ? JOINT_ROLE_HINTS[type] : null
 
@@ -238,35 +252,6 @@ function JointDialogBody({ model, initialA, initialB, precision, onClose }: {
     }
   }
 
-  const typeBtn = (o: (typeof options)[number]) => {
-    const active = o.type === type
-    return (
-      <button
-        key={o.type}
-        disabled={!o.ok}
-        title={o.reason}
-        onClick={() => {
-          setType(o.type)
-          setParams({})
-          setError(null)
-        }}
-        style={{
-          padding: '3px var(--sp-2)',
-          borderRadius: 'var(--radius-s)',
-          border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
-          background: active ? 'var(--accent-subtle)' : 'var(--surface-sunken)',
-          color: !o.ok ? 'var(--text-faint)' : active ? 'var(--accent)' : 'var(--text)',
-          cursor: o.ok ? 'pointer' : 'not-allowed',
-          fontSize: 'var(--text-xs)',
-          fontFamily: 'inherit',
-          textDecoration: o.deferred ? 'line-through' : undefined,
-        }}
-      >
-        {JOINT_TYPE_LABELS[o.type]}
-      </button>
-    )
-  }
-
   const failedSelected = type ? options.find((o) => o.type === type && !o.ok) : null
 
   return (
@@ -277,17 +262,13 @@ function JointDialogBody({ model, initialA, initialB, precision, onClose }: {
           <b>a</b> {a.name}
           {roles && <span style={{ color: 'var(--text-faint)', fontSize: 'var(--text-xs)' }}> — {roles.a}</span>}
         </span>
-        <button
+        <IconButton
           onClick={() => setPair({ a: pair.b, b: pair.a })}
           title="Swap roles (a receives, b inserts)"
-          style={{
-            border: '1px solid var(--border)', background: 'var(--surface-sunken)', cursor: 'pointer',
-            borderRadius: 'var(--radius-s)', color: 'var(--text-muted)', width: 26, height: 22,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-          }}
+          style={{ border: '1px solid var(--border)', background: 'var(--surface-sunken)' }}
         >
-          <ArrowLeftRight size={12} />
-        </button>
+          <ArrowLeftRight size={13} />
+        </IconButton>
         <span style={{ flex: 1, textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           <b>b</b> {b.name}
           {roles && <span style={{ color: 'var(--text-faint)', fontSize: 'var(--text-xs)' }}> — {roles.b}</span>}
@@ -295,57 +276,86 @@ function JointDialogBody({ model, initialA, initialB, precision, onClose }: {
       </div>
 
       {/* Type picker — precondition-filtered with teaching reasons on hover */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sp-1)' }}>
-        {options.map(typeBtn)}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sp-2)' }}>
+        {options.map((o) => (
+          <Chip
+            key={o.type}
+            selected={o.type === type}
+            disabled={!o.ok}
+            strike={o.deferred}
+            title={o.reason}
+            onClick={() => {
+              setType(o.type)
+              setParams({})
+              setError(null)
+            }}
+          >
+            {JOINT_TYPE_LABELS[o.type]}
+          </Chip>
+        ))}
       </div>
-      {failedSelected?.reason && (
-        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--warn)' }}>{failedSelected.reason}</div>
-      )}
+      {failedSelected?.reason && <Note tone="warn">{failedSelected.reason}</Note>}
       {!type && (
-        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--warn)' }}>
+        <Note tone="warn">
           No joint type fits this pair — the boards may not touch. Hover a type for why.
-        </div>
+        </Note>
       )}
 
       {/* Mini-viewport live preview */}
-      <div style={{
-        height: 200, borderRadius: 'var(--radius-m)', overflow: 'hidden',
-        border: '1px solid var(--border)', background: bg, position: 'relative',
-      }}>
-        {preview && type ? (
-          <Canvas dpr={[1, 2]} camera={{ fov: 35, position: [12, 10, 12] }}>
-            <ambientLight intensity={0.7} />
-            <directionalLight position={[10, 14, 8]} intensity={0.9} />
-            <directionalLight position={[-8, 6, -10]} intensity={0.3} />
-            <PreviewBoard board={a} carved={preview.boards.find((x) => x.id === a.id)} jointColor={jointColor} />
-            <PreviewBoard board={b} carved={preview.boards.find((x) => x.id === b.id)} jointColor={jointColor} />
-            <OrbitControls makeDefault enableDamping dampingFactor={0.12} />
-            <PreviewCamera a={a} b={b} />
-          </Canvas>
-        ) : (
-          <div style={{
-            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: 'var(--text-faint)', fontSize: 'var(--text-xs)',
-          }}>
-            {type ? 'Carving preview…' : 'Pick a joint type'}
-          </div>
-        )}
+      <div>
+        <div style={{
+          height: vpHeight, borderRadius: 'var(--radius-m)', overflow: 'hidden',
+          border: '1px solid var(--border)', background: bg, position: 'relative',
+        }}>
+          {preview && type ? (
+            <Canvas dpr={[1, 2]} camera={{ fov: 35, position: [12, 10, 12] }}>
+              <ambientLight intensity={0.7} />
+              <directionalLight position={[10, 14, 8]} intensity={0.9} />
+              <directionalLight position={[-8, 6, -10]} intensity={0.3} />
+              <PreviewBoard board={a} carved={preview.boards.find((x) => x.id === a.id)} jointColor={jointColor} />
+              <PreviewBoard board={b} carved={preview.boards.find((x) => x.id === b.id)} jointColor={jointColor} />
+              <OrbitControls makeDefault enableDamping dampingFactor={0.12} />
+              <PreviewCamera a={a} b={b} />
+            </Canvas>
+          ) : (
+            <div style={{
+              position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: 'var(--text-faint)', fontSize: 'var(--text-xs)',
+            }}>
+              {type ? 'Carving preview…' : 'Pick a joint type'}
+            </div>
+          )}
+        </div>
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize preview"
+          title="Drag to resize the preview"
+          onPointerDown={(e) => {
+            dragRef.current = { y: e.clientY, h: vpHeight }
+            e.currentTarget.setPointerCapture(e.pointerId)
+          }}
+          onPointerMove={(e) => {
+            if (dragRef.current) resizeTo(dragRef.current.h + e.clientY - dragRef.current.y)
+          }}
+          onPointerUp={() => { dragRef.current = null }}
+          style={{
+            height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'row-resize', touchAction: 'none',
+          }}
+        >
+          <div style={{ width: 48, height: 4, borderRadius: 2, background: 'var(--border-strong)' }} />
+        </div>
       </div>
 
       {/* Resolve-flow payoff + joint geometry lint from the preview carve */}
       {resolvesCollision && (
-        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--ok)' }}>
-          ✓ Resolves the collision between {a.name} and {b.name}
-        </div>
+        <Note tone="ok">✓ Resolves the collision between {a.name} and {b.name}</Note>
       )}
       {preview?.warnings.map((w, i) => (
-        <div key={i} style={{ fontSize: 'var(--text-xs)', color: 'var(--warn)' }}>
-          <b>{w.code}</b> — {w.msg}
-        </div>
+        <Note key={i} tone="warn"><b>{w.code}</b> — {w.msg}</Note>
       ))}
-      {paramPrecond && !paramPrecond.ok && (
-        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--warn)' }}>{paramPrecond.reason}</div>
-      )}
+      {paramPrecond && !paramPrecond.ok && <Note tone="warn">{paramPrecond.reason}</Note>}
 
       {/* Per-type params */}
       {type && (
@@ -359,25 +369,15 @@ function JointDialogBody({ model, initialA, initialB, precision, onClose }: {
         </div>
       )}
 
-      {error && <div style={{ fontSize: 'var(--text-xs)', color: 'var(--danger)' }}>{error}</div>}
+      {error && <Note tone="danger">{error}</Note>}
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--sp-2)', marginTop: 'var(--sp-2)' }}>
-        <button onClick={onClose} style={{
-          padding: '4px var(--sp-3)', border: '1px solid var(--border)', borderRadius: 'var(--radius-s)',
-          background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer',
-          fontSize: 'var(--text-sm)', fontFamily: 'inherit',
-        }}>Cancel</button>
-        <button
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--sp-2)', marginTop: 'var(--sp-1)' }}>
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button
+          variant="primary"
           onClick={() => void add()}
           disabled={!type || saving || (paramPrecond !== null && !paramPrecond.ok)}
-          style={{
-            padding: '4px var(--sp-4)', border: 'none', borderRadius: 'var(--radius-s)',
-            background: 'var(--accent)', color: 'var(--text-on-accent)',
-            cursor: !type || saving ? 'default' : 'pointer',
-            opacity: !type || saving || (paramPrecond !== null && !paramPrecond.ok) ? 0.5 : 1,
-            fontSize: 'var(--text-sm)', fontFamily: 'inherit', fontWeight: 600,
-          }}
-        >{saving ? 'Adding…' : 'Add joint'}</button>
+        >{saving ? 'Adding…' : 'Add joint'}</Button>
       </div>
     </>
   )
@@ -390,43 +390,18 @@ export function JointDialog({ precision }: { precision: number }) {
   const open = !!pair && !!model
 
   return (
-    <Dialog.Root open={open} onOpenChange={(v) => !v && close()}>
-      <Dialog.Portal>
-        <Dialog.Overlay style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 200 }} />
-        <Dialog.Content
-          aria-label="Add joint"
-          style={{
-            position: 'fixed', top: '8%', left: '50%', transform: 'translateX(-50%)',
-            width: 420, maxHeight: '84dvh', overflowY: 'auto',
-            background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)',
-            borderRadius: 'var(--radius-l)', boxShadow: '0 24px 64px rgba(0,0,0,0.45)',
-            zIndex: 201, padding: 'var(--sp-5)',
-            display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Dialog.Title style={{ fontSize: 'var(--text-md)', fontWeight: 600, color: 'var(--text)', margin: 0 }}>
-              Add Joint
-            </Dialog.Title>
-            <Dialog.Close asChild>
-              <button aria-label="Close" style={{ border: 'none', background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer' }}>
-                <X size={16} />
-              </button>
-            </Dialog.Close>
-          </div>
-          {pair && model && (
-            <JointDialogBody
-              // Remount per pair so all local state (type/params/preview) resets.
-              key={`${pair.a}:${pair.b}`}
-              model={model}
-              initialA={pair.a}
-              initialB={pair.b}
-              precision={precision}
-              onClose={close}
-            />
-          )}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <DialogShell open={open} onOpenChange={(v) => !v && close()} title="Add Joint" width={560} top="6%">
+      {pair && model && (
+        <JointDialogBody
+          // Remount per pair so all local state (type/params/preview) resets.
+          key={`${pair.a}:${pair.b}`}
+          model={model}
+          initialA={pair.a}
+          initialB={pair.b}
+          precision={precision}
+          onClose={close}
+        />
+      )}
+    </DialogShell>
   )
 }
