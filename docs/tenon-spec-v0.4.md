@@ -123,6 +123,27 @@ Not all machining relationships are two-board joints. An edge groove on a stile 
 
 The `mortise_tenon` joint's `haunch` param references `haunch_depth` = the governing `edge_groove.depth` on the stile — this is now a live derivation, not a magic number. Panel auto-sizing: opening width/height + 2 × groove depth − movement gap. Movement gap = `panel.dims.w_or_h × species.shrink_tan_pct × 0.6` (60% of tangential, flat-sawn estimate). Emitted as a cut-list note; the movement lint becomes sizing math rather than just a warning.
 
+### 3.5 Edge profiles (router mode, board-level features)
+
+A router bit shapes one **arris** — an edge/face pair, not a whole board edge like `edge_grooves`. A board has 8 arrises: the 4 `edge_grooves` edges (`top`/`bottom`/`left`/`right`) × 2 faces (`front` = +thickness, `back` = −thickness, board-local). Like edge grooves, edge profiles are board-level features carved before joint evaluation, edited only via `update_board` (no dedicated ops), and denormalized — the profile's geometry (radius/width/depth) is stored on the board itself, not looked up from the bit store at eval time, so the worker and the WASM-free cut-list server never need DB access and editing/retiring a bit never invalidates a saved model. `bit_id` is provenance only (which catalog entry it came from, for display).
+
+```jsonc
+{
+  "id": "epf_a1B2c3D4e5",
+  "edge": "top",                 // "top" | "bottom" | "left" | "right" (board-local, per §3.4)
+  "face": "front",                // "front" (+thickness) | "back" (−thickness)
+  "profile": "roundover",         // "roundover" | "chamfer" | "cove" | "ogee" | "rabbet"
+  "radius": 0.25,                 // roundover / cove / ogee
+  "bit_id": "bit_roundover_14"    // nullable — which router-bit-store entry this came from
+}
+```
+
+`chamfer` carries `width` instead of `radius` (45° implied in v1); `rabbet` carries `width` + `depth`. The schema is a discriminated union on `profile` so a stray `radius` on a rabbet is a validation error, not a silently-ignored field (§11.4 doctrine).
+
+Corner overlaps are not mitered: two profiles meeting at a corner (e.g. a roundover on `top`/`front` and a chamfer on `right`/`front`) simply union-subtract, matching what actually happens at a router table. Router mode carves a new `'edge_profile'` cut feature and, when a profile's reach overlaps a joint's cutter bounds on the same board, emits a soft `PROFILE_JOINT_OVERLAP` warning (carve proceeds — same lenient doctrine as every other joinery warning).
+
+**Router bit store**: a `bits` table (§9) — id, name, `profile`, and the profile's dimension fields (`radius`, `angle_deg`, `cut_width`, `cut_depth`), shank size, brand — seeded with common bits and user-editable, on the model of the species table (§8). Picking a bit in router mode just fills in an edge profile's dimension fields; the store is inventory, not a live geometry dependency.
+
 ### 3.2 Joint
 
 ```jsonc
@@ -379,6 +400,18 @@ CREATE TABLE hardware (
   notes TEXT
 );
 -- bids, bid_line_items: phase-4 spec addendum. Labor line items use the same category enum as time_logs.
+CREATE TABLE bits (                        -- router bit inventory (§3.5), seeded + user-editable, mirrors species
+  id TEXT PRIMARY KEY,                     -- bit_roundover_14
+  name TEXT NOT NULL,
+  profile TEXT NOT NULL,                   -- roundover | chamfer | cove | ogee | rabbet
+  radius REAL,                             -- roundover / cove / ogee
+  angle_deg REAL,                          -- chamfer (45 for all seeds)
+  cut_width REAL,                          -- chamfer leg / rabbet width
+  cut_depth REAL,                          -- rabbet depth capacity
+  shank TEXT DEFAULT '1/4',                -- '1/4' | '1/2'
+  brand TEXT, notes TEXT
+);
+-- Seed set: roundovers 1/8–1/2", chamfer 45° ×2 widths, coves 1/4 & 1/2, Roman ogees 5/32 & 1/4, rabbeting 3/8"
 CREATE TABLE settings (
   key TEXT PRIMARY KEY,   -- e.g. "theme", "density", "default_species", "snap_grid", "labor_rate"
   value TEXT NOT NULL     -- JSON scalar or object; parsed on read
@@ -530,13 +563,14 @@ Working pattern: plan high, execute low. For each Fable-tagged chunk, run a desi
 | 13 | `apply_model_ops`, `get_model`, `validate_model` MCP + "errors must teach" pass | 9, 4 | Opus 4.8; **Fable 5 error-quality pass** | Rejection messages determine whether the Claude edit loop converges |
 | 14 | `render_view` (Puppeteer) + thumbnails | 7 | Sonnet 4.6 | Glue code |
 | 15 | Cut list engine + **glue_up strip math** + **panel auto-sizing** (§3.4 movement gap) + printable/CSV | 10 | Sonnet 4.6 | §7 rules exact; panel math is new v0.3 addition |
-| 16 | Box joint + dovetail spacing solver | 10 | **Fable 5 solver math → Opus 4.8 implement** | Two derivation problems first; reordered ahead of the bid engine (2026-07-07) — no dependency on 15/17, joints matter more than billing near-term |
-| 17 | Bid engine + **hardware line items** + estimate-vs-actual category rollup + printable bid | 15 | Sonnet 4.6 | Arithmetic + templating; hardware table now feeds bid |
-| 17.5 | **3D print export**: scale validator, `@jscadui/3mf-export` serializer, merged + parts modes, embedded slicer notes, `export_print_model` MCP tool, `/api/models/:id/export` route (§21) | 9 | Sonnet 4.6 | Fully specified; pure output formatting over existing Manifold solids |
-| 18 | Profiles (presets + SVG import) + turnings (revolve) | 9 | Opus 4.8 | Tessellation tolerances, 1:1 template output |
-| 19 | Polish: wood textures, movement lint, **shop-mode density** (§19), settings screen full UI, model templates | 12+ | Sonnet 4.6 / Haiku 4.5 | Incremental; shop-mode sizing validated at bench |
+| 16 | Box joint + dovetail spacing solver | 10 | **Fable 5 solver math → Opus 4.8 implement** | Two derivation problems first; reordered ahead of the bid engine (2026-07-07) — no dependency on 15/18, joints matter more than billing near-term |
+| 17 | Router mode: bit store (§9 `bits` table + REST) + edge-profile schema (§3.5) + swept-profile cutter (roundover/chamfer/cove/ogee/rabbet) + cutlist notes + viewport arris picking | 9, 2 | **Fable 5 profile-curve derivation → Opus 4.8 implement** | Third derivation problem in a row (curved cross-section cutter, no precedent in the cutter primitives) — inserted ahead of the bid engine (2026-07-07), same rationale as chunk 16: no dependency on 18, edge treatments matter more near-term than billing. See `docs/chunk17-design.md` |
+| 18 | Bid engine + **hardware line items** + estimate-vs-actual category rollup + printable bid | 15 | Sonnet 4.6 | Arithmetic + templating; hardware table now feeds bid |
+| 18.5 | **3D print export**: scale validator, `@jscadui/3mf-export` serializer, merged + parts modes, embedded slicer notes, `export_print_model` MCP tool, `/api/models/:id/export` route (§21) | 9 | Sonnet 4.6 | Fully specified; pure output formatting over existing Manifold solids |
+| 19 | Profiles (presets + SVG import) + turnings (revolve) | 9 | Opus 4.8 | Tessellation tolerances, 1:1 template output |
+| 20 | Polish: wood textures, movement lint, **shop-mode density** (§19), settings screen full UI, model templates | 12+ | Sonnet 4.6 / Haiku 4.5 | Incremental; shop-mode sizing validated at bench |
 
-Fable 5 touches six chunks (2-review, 9, 12, 13-pass, 16, and the §20 token system design session before chunk 5). Phase-1 survival milestone lands at chunk 4; design token foundation at chunk 5 before any component is rendered; command registry at chunk 6 before any interaction is wired.
+Fable 5 touches seven chunks (2-review, 9, 12, 13-pass, 16, 17, and the §20 token system design session before chunk 5). Phase-1 survival milestone lands at chunk 4; design token foundation at chunk 5 before any component is rendered; command registry at chunk 6 before any interaction is wired.
 
 ---
 
@@ -689,15 +723,16 @@ class CommandRegistry {
 
 Every UI surface — toolbar, context menu, keyboard handler, command palette — is a renderer over `registry.filtered(ctx)`. Nothing binds behavior to a button directly. Consequences: keyboard shortcuts are a table; the palette is free; menus reconfigure without touching logic; user-remappable shortcuts are a settings screen, not a refactor (v2). Commands ultimately emit ops: `command → op(s) → validation → evaluate` — the same chokepoint as the data layer.
 
-### 19.2 Modes — three, not a palette
+### 19.2 Modes — four, not a palette
 
 | Mode | Shortcut | Behavior |
 |---|---|---|
 | **Select** | `V` / `Esc` | Click board → select; drag gizmo to move; all contextual actions hang off selection |
 | **Add board** | `B` | Numeric-first dialog (dims + species defaulting to last-used) → ghost placed with snapping; `Enter` repeats |
 | **Measure** | `M` | Point-to-point and face-to-face readouts, fractional display |
+| **Router** | `E` | Pick a bit from the store panel (§3.5); click an arris to paint/toggle that edge profile — one undoable `update_board` per click, no separate confirm step |
 
-Transform is not a mode — the gizmo lives on the selection (`G`/`R` toggle translate/rotate, `X`/`Y`/`Z` constrain, typed digit = exact offset). Joint creation is not a mode — it is contextual: select two overlapping boards → `J` (or tap the lint badge) → joint dialog pre-filtered to types whose `requires` predicate the current overlap satisfies, with live ghost preview. The lint-driven flow is the primary joint path: place boards → collision badge → "resolve as joint…". A tool palette with fifteen modes is the failure pattern of hobby CAD.
+Transform is not a mode — the gizmo lives on the selection (`G`/`R` toggle translate/rotate, `X`/`Y`/`Z` constrain, typed digit = exact offset). Joint creation is not a mode — it is contextual: select two overlapping boards → `J` (or tap the lint badge) → joint dialog pre-filtered to types whose `requires` predicate the current overlap satisfies, with live ghost preview. The lint-driven flow is the primary joint path: place boards → collision badge → "resolve as joint…". Router mode is the one exception to "joint creation is contextual, not a mode": an edge profile has no second board to select against, so it needs its own paint-style mode rather than a selection-driven dialog. A tool palette with fifteen modes is the failure pattern of hobby CAD — four earns their keep by covering categorically different interactions (pick, place, read, paint).
 
 **Command palette** (`Cmd/Ctrl+K`): fuzzy search over the full registry — modeling commands, jobs-side actions, view presets, settings. For a single-user power-user tool, this surface beats deep menus permanently.
 
