@@ -13,7 +13,8 @@ import {
 } from '../lib/jointTypes.js'
 import { JointParamsForm } from './JointParamsForm.js'
 import { speciesColor } from '../lib/speciesColors.js'
-import { Button, Chip, DialogShell, IconButton, Note } from './kit.js'
+import { Button, Chip, DialogShell, IconButton, loadPersistedSize, Note, ResizeHandle, savePersistedSize, ViewSlider } from './kit.js'
+import { computeExplodeOffsets } from '../viewport/explode.js'
 // Static import is safe here: JointDialog lives in the code-split designer chunk
 // (imported from DesignerShell), which already carries THREE — the main
 // jobs/photos bundle is untouched. The worker still spawns lazily on first carve.
@@ -31,10 +32,10 @@ const PREVIEW_JOINT_ID = 'jnt_PREVIEW000'
 // resolving it is the whole point.
 const ANALYTIC_CODES = new Set(['UNRESOLVED_COLLISION', 'JOINT_PRECONDITION_FAILED'])
 
-// Preview viewport height is user-draggable; remember it across dialog opens
-// (session-scoped — no reason to persist a window-size-relative value).
+// Preview viewport height is user-draggable and persists across sessions.
 const VP_MIN_HEIGHT = 160
-let lastPreviewHeight = 280
+const VP_MAX_HEIGHT = 640
+const VP_HEIGHT_KEY = 'tenon:jointPreviewHeight'
 
 interface Preview {
   boards: CarvedBoard[]
@@ -81,13 +82,18 @@ function PreviewCamera({ a, b }: { a: Board; b: Board }) {
 
 const deg2rad = (d: number) => (d * Math.PI) / 180
 
-function PreviewBoard({ board, carved, jointColor }: { board: Board; carved: CarvedBoard | undefined; jointColor: string }) {
+function PreviewBoard({ board, carved, jointColor, offset }: {
+  board: Board; carved: CarvedBoard | undefined; jointColor: string; offset: [number, number, number]
+}) {
   const color = useMemo(() => speciesColor(board.species), [board.species])
   const [px, py, pz] = board.transform.pos
   const [rx, ry, rz] = board.transform.rot
   if (!carved) return null
   return (
-    <group position={[px, py, pz]} rotation={[deg2rad(rx), deg2rad(ry), deg2rad(rz)]}>
+    <group
+      position={[px + offset[0], py + offset[1], pz + offset[2]]}
+      rotation={[deg2rad(rx), deg2rad(ry), deg2rad(rz)]}
+    >
       <mesh geometry={carved.geometry}>
         <meshStandardMaterial color={color} roughness={0.7} metalness={0} />
       </mesh>
@@ -214,14 +220,22 @@ function JointDialogBody({ model, initialA, initialB, precision, onClose }: {
     [],
   )
 
+  // Exploded view (same diagrammatic centroid-radial separation as the main viewport,
+  // see viewport/explode.ts) — with only a/b in play it reduces to "pull the pair apart
+  // along whichever axis separates them most," which is enough to see a concealed joint.
+  const [explode, setExplode] = useState(0)
+  const explodeOffsets = useMemo(
+    () => (a && b ? computeExplodeOffsets({ boards: [a, b] }, explode) : new Map<string, [number, number, number]>()),
+    [a, b, explode],
+  )
+
   // ── Drag-resizable preview height (grip strip under the viewport) ──
-  const [vpHeight, setVpHeight] = useState(lastPreviewHeight)
-  const dragRef = useRef<{ y: number; h: number } | null>(null)
-  const resizeTo = (h: number) => {
-    const clamped = Math.round(Math.min(Math.max(h, VP_MIN_HEIGHT), window.innerHeight * 0.6))
-    lastPreviewHeight = clamped
-    setVpHeight(clamped)
-  }
+  const [vpHeight, setVpHeight] = useState(() => loadPersistedSize(VP_HEIGHT_KEY, 280, VP_MIN_HEIGHT, VP_MAX_HEIGHT))
+  const resizeBy = (delta: number) => setVpHeight((h) => {
+    const next = Math.round(Math.min(Math.max(h + delta, VP_MIN_HEIGHT), Math.min(VP_MAX_HEIGHT, window.innerHeight * 0.6)))
+    savePersistedSize(VP_HEIGHT_KEY, next)
+    return next
+  })
 
   if (!a || !b) return null // a board vanished mid-dialog (remote edit) — shell closes us
   const roles = type ? JOINT_ROLE_HINTS[type] : null
@@ -312,8 +326,14 @@ function JointDialogBody({ model, initialA, initialB, precision, onClose }: {
               <ambientLight intensity={0.7} />
               <directionalLight position={[10, 14, 8]} intensity={0.9} />
               <directionalLight position={[-8, 6, -10]} intensity={0.3} />
-              <PreviewBoard board={a} carved={preview.boards.find((x) => x.id === a.id)} jointColor={jointColor} />
-              <PreviewBoard board={b} carved={preview.boards.find((x) => x.id === b.id)} jointColor={jointColor} />
+              <PreviewBoard
+                board={a} carved={preview.boards.find((x) => x.id === a.id)} jointColor={jointColor}
+                offset={explodeOffsets.get(a.id) ?? [0, 0, 0]}
+              />
+              <PreviewBoard
+                board={b} carved={preview.boards.find((x) => x.id === b.id)} jointColor={jointColor}
+                offset={explodeOffsets.get(b.id) ?? [0, 0, 0]}
+              />
               <OrbitControls makeDefault enableDamping dampingFactor={0.12} />
               <PreviewCamera a={a} b={b} />
             </Canvas>
@@ -325,27 +345,22 @@ function JointDialogBody({ model, initialA, initialB, precision, onClose }: {
               {type ? 'Carving preview…' : 'Pick a joint type'}
             </div>
           )}
+          {preview && type && (
+            <div style={{
+              position: 'absolute', right: 'var(--sp-2)', top: 'var(--sp-2)', zIndex: 10,
+              background: 'var(--surface-overlay)', border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-m)', padding: 'var(--sp-1) var(--sp-2)',
+              fontSize: 'var(--text-xs)',
+            }}>
+              <ViewSlider
+                label="explode" value={explode} active={explode > 0}
+                title="Slide the boards apart to see the joint"
+                onChange={setExplode}
+              />
+            </div>
+          )}
         </div>
-        <div
-          role="separator"
-          aria-orientation="horizontal"
-          aria-label="Resize preview"
-          title="Drag to resize the preview"
-          onPointerDown={(e) => {
-            dragRef.current = { y: e.clientY, h: vpHeight }
-            e.currentTarget.setPointerCapture(e.pointerId)
-          }}
-          onPointerMove={(e) => {
-            if (dragRef.current) resizeTo(dragRef.current.h + e.clientY - dragRef.current.y)
-          }}
-          onPointerUp={() => { dragRef.current = null }}
-          style={{
-            height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'row-resize', touchAction: 'none',
-          }}
-        >
-          <div style={{ width: 48, height: 4, borderRadius: 2, background: 'var(--border-strong)' }} />
-        </div>
+        <ResizeHandle axis="y" onDrag={resizeBy} title="Drag to resize the preview" />
       </div>
 
       {/* Resolve-flow payoff + joint geometry lint from the preview carve */}

@@ -22,6 +22,19 @@ import { AddBoardDialog } from './AddBoardDialog.js'
 import { AssignJobDialog } from './AssignJobDialog.js'
 import { JointDialog } from './JointDialog.js'
 import { ViewportContextMenu } from './ViewportContextMenu.js'
+import { loadPersistedSize, ResizeHandle, savePersistedSize, ViewSlider } from './kit.js'
+
+// The viewport sits between two resizable panels — the outliner/lint/cutlist
+// drawer on the left and the Inspector on the right. Both persist across
+// sessions the same way the joint-dialog preview height does (kit.js).
+const PANEL_MIN = 200
+const PANEL_MAX = 440
+const PANEL_DEFAULT = 252
+const PANEL_KEY = 'tenon:leftPanelWidth'
+const INSPECTOR_MIN = 240
+const INSPECTOR_MAX = 520
+const INSPECTOR_DEFAULT = 300
+const INSPECTOR_KEY = 'tenon:inspectorWidth'
 
 const SNAP_CYCLE: Array<0.0625 | 0.03125 | 0> = [0.0625, 0.03125, 0]
 const SNAP_LABEL: Record<string, string> = { '0.0625': '1/16"', '0.03125': '1/32"', '0': 'off' }
@@ -149,24 +162,6 @@ function ModelMenu({ modelName, jobId }: { modelName: string; jobId: string | nu
   )
 }
 
-// A compact labelled slider for the viewport's joint-view overlay (explode / isolate).
-function ViewSlider({ label, value, active, muted, title, onChange }: {
-  label: string; value: number; active: boolean; muted?: boolean; title: string
-  onChange: (v: number) => void
-}) {
-  const color = muted ? 'var(--text-faint)' : active ? 'var(--accent)' : 'var(--text-muted)'
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', color }} title={title}>
-      <span style={{ fontFamily: 'monospace', width: 52 }}>{label}</span>
-      <input
-        type="range" min={0} max={1} step={0.02} value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        style={{ width: 96, accentColor: 'var(--accent)', cursor: 'pointer' }}
-      />
-    </div>
-  )
-}
-
 function isTyping(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false
   return el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA' || el.isContentEditable
@@ -196,6 +191,19 @@ export function DesignerShell() {
   const canUndo = useModelStore((s) => s.undoStack.length > 0)
   const canRedo = useModelStore((s) => s.redoStack.length > 0)
   const store = useModelStore.getState
+
+  const [panelWidth, setPanelWidth] = useState(() => loadPersistedSize(PANEL_KEY, PANEL_DEFAULT, PANEL_MIN, PANEL_MAX))
+  const resizePanelBy = (delta: number) => setPanelWidth((w) => {
+    const next = Math.round(Math.min(Math.max(w + delta, PANEL_MIN), PANEL_MAX))
+    savePersistedSize(PANEL_KEY, next)
+    return next
+  })
+  const [inspectorWidth, setInspectorWidth] = useState(() => loadPersistedSize(INSPECTOR_KEY, INSPECTOR_DEFAULT, INSPECTOR_MIN, INSPECTOR_MAX))
+  const resizeInspectorBy = (delta: number) => setInspectorWidth((w) => {
+    const next = Math.round(Math.min(Math.max(w + delta, INSPECTOR_MIN), INSPECTOR_MAX))
+    savePersistedSize(INSPECTOR_KEY, next)
+    return next
+  })
 
   const isDark = ctx.settings?.theme === 'dark'
   const precision = ctx.settings?.fraction_precision ?? 16
@@ -292,7 +300,7 @@ export function DesignerShell() {
     <div style={{
       display: 'grid',
       gridTemplateRows: 'var(--topbar-height) 1fr var(--status-height)',
-      gridTemplateColumns: 'var(--rail-width) 1fr var(--inspector-width)',
+      gridTemplateColumns: `var(--rail-width) 1fr auto ${inspectorWidth}px`,
       height: '100dvh', overflow: 'hidden',
       background: 'var(--surface)', color: 'var(--text)',
     }}>
@@ -403,7 +411,7 @@ export function DesignerShell() {
         {/* Left overlay drawer */}
         {panel && (
           <div style={{
-            position: 'absolute', left: 0, top: 0, bottom: 0, width: 252,
+            position: 'absolute', left: 0, top: 0, bottom: 0, width: panelWidth,
             background: 'var(--surface-raised)', borderRight: '1px solid var(--border-strong)',
             zIndex: 10, display: 'flex', flexDirection: 'column', boxShadow: '4px 0 16px rgba(0,0,0,0.25)',
           }}>
@@ -423,6 +431,11 @@ export function DesignerShell() {
               {panel === 'lint' && <LintList />}
               {panel === 'cutlist' && <CutlistPanel />}
             </div>
+          </div>
+        )}
+        {panel && (
+          <div style={{ position: 'absolute', left: panelWidth, top: 0, bottom: 0, zIndex: 11 }}>
+            <ResizeHandle axis="x" onDrag={resizePanelBy} title="Resize panel" />
           </div>
         )}
 
@@ -451,8 +464,14 @@ export function DesignerShell() {
       </div>
 
       {/* ── Inspector ────────────────────────────────────────────────── */}
+      <ResizeHandle
+        axis="x"
+        onDrag={resizeInspectorBy}
+        title="Resize inspector"
+        style={{ background: 'var(--surface-raised)', borderLeft: '1px solid var(--border)' }}
+      />
       <div style={{
-        background: 'var(--surface-raised)', borderLeft: '1px solid var(--border)',
+        background: 'var(--surface-raised)',
         overflowY: 'auto', display: 'flex', flexDirection: 'column',
       }}>
         <Inspector precision={precision} />

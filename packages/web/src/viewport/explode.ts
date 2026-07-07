@@ -13,7 +13,7 @@
 //
 // Pure (no THREE, no React): the Viewport adds the offset to each board's <group>
 // position; geometry stays board-local and the model is untouched (this is display-only).
-import type { Model } from '@tenon/core'
+import type { Board } from '@tenon/core'
 import { worldAABB } from '@tenon/core'
 
 // Separation at factor=1, as a fraction of the assembly radius (half its AABB diagonal).
@@ -26,7 +26,10 @@ export type ExplodeOffsets = Map<string, [number, number, number]>
 
 // Map of board id → world-space offset to add to its position. Empty when there's
 // nothing to explode (factor 0, no model, or a single board).
-export function computeExplodeOffsets(model: Model | null, factor: number): ExplodeOffsets {
+//
+// Takes just `{ boards }` rather than a full Model so the joint dialog's mini-preview
+// can reuse this on an ad-hoc two-board pair without fabricating joints/groups/meta.
+export function computeExplodeOffsets(model: { boards: Board[] } | null, factor: number): ExplodeOffsets {
   const out: ExplodeOffsets = new Map()
   if (!model || factor <= 0 || model.boards.length < 2) return out
 

@@ -1,4 +1,4 @@
-import { forwardRef, type CSSProperties, type ReactNode } from 'react'
+import { forwardRef, useRef, type CSSProperties, type ReactNode } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 
@@ -55,6 +55,25 @@ export function Checkbox({ checked, onSet, disabled }: {
       onChange={(e) => onSet(e.target.checked)}
       style={{ accentColor: 'var(--accent)', cursor: disabled ? 'default' : 'pointer', width: 15, height: 15 }}
     />
+  )
+}
+
+// Compact labelled slider for viewport overlays (explode / isolate) — used by
+// both the main viewport and the joint dialog's mini-viewport.
+export function ViewSlider({ label, value, active, muted, title, onChange }: {
+  label: string; value: number; active: boolean; muted?: boolean; title: string
+  onChange: (v: number) => void
+}) {
+  const color = muted ? 'var(--text-faint)' : active ? 'var(--accent)' : 'var(--text-muted)'
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', color }} title={title}>
+      <span style={{ fontFamily: 'monospace', width: 52 }}>{label}</span>
+      <input
+        type="range" min={0} max={1} step={0.02} value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        style={{ width: 96, accentColor: 'var(--accent)', cursor: 'pointer' }}
+      />
+    </div>
   )
 }
 
@@ -182,6 +201,70 @@ export function Note({ tone = 'faint', children }: {
 }) {
   const color = tone === 'faint' ? 'var(--text-faint)' : `var(--${tone})`
   return <div style={{ fontSize: 'var(--text-xs)', color, lineHeight: 1.5 }}>{children}</div>
+}
+
+/* ── Resizing ────────────────────────────────────────────────────────────── */
+
+// Draggable divider — axis 'x' resizes a width (col-resize, vertical grip bar),
+// axis 'y' resizes a height (row-resize, horizontal grip bar). Reports the
+// pointer-move delta each frame; the caller folds it into whatever dimension
+// it owns. Used for both panel widths (DesignerShell) and preview heights
+// (JointDialog) so every drag handle in the app looks and behaves the same.
+export function ResizeHandle({ axis, onDrag, title = 'Drag to resize', thickness = 14, style }: {
+  axis: 'x' | 'y'
+  onDrag: (delta: number) => void
+  title?: string
+  thickness?: number
+  style?: CSSProperties
+}) {
+  const dragRef = useRef<number | null>(null)
+  return (
+    <div
+      role="separator"
+      aria-orientation={axis === 'x' ? 'vertical' : 'horizontal'}
+      aria-label={title}
+      title={title}
+      onPointerDown={(e) => {
+        dragRef.current = axis === 'x' ? e.clientX : e.clientY
+        e.currentTarget.setPointerCapture(e.pointerId)
+      }}
+      onPointerMove={(e) => {
+        if (dragRef.current === null) return
+        const pos = axis === 'x' ? e.clientX : e.clientY
+        onDrag(pos - dragRef.current)
+        dragRef.current = pos
+      }}
+      onPointerUp={() => { dragRef.current = null }}
+      style={{
+        flexShrink: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        cursor: axis === 'x' ? 'col-resize' : 'row-resize',
+        touchAction: 'none',
+        ...(axis === 'x' ? { width: thickness, height: '100%' } : { height: thickness, width: '100%' }),
+        ...style,
+      }}
+    >
+      <div style={
+        axis === 'x'
+          ? { width: 4, height: 40, borderRadius: 2, background: 'var(--border-strong)' }
+          : { width: 40, height: 4, borderRadius: 2, background: 'var(--border-strong)' }
+      } />
+    </div>
+  )
+}
+
+// Pixel dimension that persists across sessions (panel widths, preview
+// heights). Reads its stored value lazily so the very first render already
+// has the user's last size — no layout jump on mount.
+export function loadPersistedSize(key: string, fallback: number, min: number, max: number): number {
+  if (typeof localStorage === 'undefined') return fallback
+  const n = Number(localStorage.getItem(key))
+  return Number.isFinite(n) && n > 0 ? Math.min(Math.max(n, min), max) : fallback
+}
+
+export function savePersistedSize(key: string, value: number): void {
+  if (typeof localStorage === 'undefined') return
+  localStorage.setItem(key, String(value))
 }
 
 /* ── Dialog shell ────────────────────────────────────────────────────────── */
