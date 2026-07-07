@@ -40,8 +40,8 @@ This is where SQLite, migrations, and uploaded photos live.
 ```bash
 sudo mkdir -p /etc/tenon
 sudo tee /etc/tenon/env > /dev/null <<'ENVEOF'
-PORT=3000
-DATA_DIR=/home/brian/data
+PORT=3001
+DATA_DIR=/home/bhughes/data
 MCP_BEARER_TOKEN=$(openssl rand -hex 32)
 NODE_ENV=production
 ENVEOF
@@ -69,7 +69,7 @@ sudo journalctl -u tenon -n 50 -f
 Should show:
 ```
 INFO: database ready
-INFO: tenon server listening on 3000
+INFO: tenon server listening on 3001
 ```
 
 ---
@@ -114,24 +114,28 @@ sudo journalctl -u tenon -n 20
 
 ### 4.1 Enable Tailscale Funnel for /mcp (Claude.ai access)
 
+**Do not use bare port 443** — it already belongs to another app on this box (fuel-tracker calorie app). Scope the funnel to the 8443 HTTPS listener instead:
+
 ```bash
-tailscale funnel --bg 443
+tailscale funnel --bg --https=8443 3001
 ```
 
-This exposes your server to the public internet on port 443 (HTTPS). The MCP endpoint will be:
+The MCP endpoint will be:
 ```
-https://mini-canterbury.<tailnet>.ts.net/mcp
+https://mini-canterbury.<tailnet>.ts.net:8443/mcp
 ```
 
 Bearer auth is enforced in the server middleware — only requests with the correct `MCP_BEARER_TOKEN` header succeed.
 
-### 4.2 Tailscale serve for REST API (tailnet-only)
+### 4.2 Tenon PWA (tailnet-only)
 
-```bash
-tailscale serve --bg 3000
+The PWA itself is not funneled — only `/mcp` is exposed publicly (4.1). The rest of the app is reachable directly over the tailnet at:
+
+```
+https://mini-canterbury.<tailnet>.ts.net:8443/
 ```
 
-This makes `http://mini-canterbury:3000` available only to machines in your Tailscale network (your phone, shop PC, etc.). Not exposed to the internet.
+Not exposed to the internet.
 
 ---
 
@@ -140,10 +144,10 @@ This makes `http://mini-canterbury:3000` available only to machines in your Tail
 ### 5.1 From your dev machine, run the deploy script
 
 ```bash
-./deploy/deploy.sh mini-canterbury
+./deploy/deploy.sh
 ```
 
-This will:
+(No args needed — defaults to `bhughes@mini-canterbury`.) This will:
 1. Typecheck and test locally
 2. Build all packages
 3. Create a clean tarball (`tenon.tar.gz`)
@@ -161,7 +165,7 @@ If it succeeds, you'll see:
 ### 5.2 Verify the deployment
 
 ```bash
-ssh mini-canterbury "systemctl status tenon && echo '---' && curl http://localhost:3000"
+ssh bhughes@mini-canterbury "systemctl status tenon && echo '---' && curl http://localhost:3001"
 ```
 
 Should return the HTML from the static web app.
@@ -174,7 +178,7 @@ Should return the HTML from the static web app.
 
 From the env file you created:
 ```bash
-ssh mini-canterbury "cat /etc/tenon/env | grep -E 'MCP_BEARER_TOKEN|NODE_ENV'"
+ssh bhughes@mini-canterbury "cat /etc/tenon/env | grep -E 'MCP_BEARER_TOKEN|NODE_ENV'"
 ```
 
 ### 6.2 In Claude.ai, add the MCP server
@@ -182,7 +186,7 @@ ssh mini-canterbury "cat /etc/tenon/env | grep -E 'MCP_BEARER_TOKEN|NODE_ENV'"
 Go to **Settings → Beta features → Claude Extensions (or Model Context Protocol)** and add:
 
 - **Type:** HTTP (Streamable)
-- **URL:** `https://mini-canterbury.<tailnet>.ts.net/mcp`
+- **URL:** `https://mini-canterbury.<tailnet>.ts.net:8443/mcp`
 - **Authentication:** Bearer token (paste the token from step 6.1)
 
 ### 6.3 Test the MCP tools
@@ -209,7 +213,7 @@ sudo journalctl -u tenon -n 100
 ```
 
 Common issues:
-- **"already in use"** → Port 3000 is bound. Check with `lsof -i :3000`
+- **"already in use"** → Port 3001 is bound. Check with `lsof -i :3001`
 - **"Cannot find migrations"** — tsup onSuccess hook didn't copy migrations. Run manually:
   ```bash
   cp -r packages/server/migrations packages/server/dist/migrations
@@ -229,7 +233,7 @@ Common issues:
 ## After Deployment: First Test
 
 1. **Add a job from the PWA:**
-   - Install on phone via `https://mini-canterbury:5000` (after deployment, serves from 443)
+   - Install on phone via `https://mini-canterbury.<tailnet>.ts.net:8443/` (tailnet-only)
    - Create a job titled "Test Job"
 
 2. **Upload a photo:**
@@ -243,7 +247,7 @@ Common issues:
 
 4. **Monitor server health:**
    ```bash
-   ssh mini-canterbury "tail -f /var/log/syslog | grep tenon"
+   ssh bhughes@mini-canterbury "tail -f /var/log/syslog | grep tenon"
    ```
 
 ---
@@ -253,7 +257,7 @@ Common issues:
 Each deploy creates `~/releases/<timestamp>`. To roll back:
 
 ```bash
-ssh mini-canterbury
+ssh bhughes@mini-canterbury
 ln -sfn ~/releases/<previous-timestamp> ~/current
 sudo systemctl restart tenon
 ```
@@ -263,5 +267,5 @@ sudo systemctl restart tenon
 ## Notes
 
 - **Data is not backed up yet.** Back up `~/data/` regularly (or set up rsync from your dev machine).
-- **Updates:** To deploy a new version, just run `./deploy/deploy.sh mini-canterbury` again.
+- **Updates:** To deploy a new version, just run `./deploy/deploy.sh` again.
 - **Database migrations:** Happen automatically on startup (`initDb()` in `packages/server/src/db.ts`). If you're concerned, take a backup of `~/data/tenon.db` before deploying.
