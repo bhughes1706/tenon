@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { Model, Op, OpResult, Warning, Board } from '@tenon/core'
 import { makeBoardId, makeGroupId } from '@tenon/core'
-import { fetchModel, applyModelOps } from './modelApi.js'
+import { fetchModel, fetchModelRow, applyModelOps } from './modelApi.js'
 import { applyOpsLocal, invertOps } from './clientOps.js'
 // Collision lint is now core (chunk 9): the same analytic pass runs here for instant
 // optimistic feedback and on the server, which returns the authoritative warnings in
@@ -28,6 +28,9 @@ interface UndoEntry {
 interface ModelState {
   modelId: string | null
   model: Model | null
+  // Job assignment lives on the `models` row, not the doc (doc has no job_id) —
+  // set from the row on load, updated locally after a PATCH assign/unassign.
+  jobId: string | null
   loading: boolean
   saving: boolean
   error: string | null
@@ -85,6 +88,7 @@ interface ModelState {
 
   // Actions
   load: (id: string) => Promise<void>
+  setJobId: (jobId: string | null) => void
   dispatch: (ops: Op[]) => Promise<boolean>
   undo: () => Promise<void>
   redo: () => Promise<void>
@@ -203,6 +207,7 @@ export const useModelStore = create<ModelState>((set, get) => {
   return {
     modelId: null,
     model: null,
+    jobId: null,
     loading: false,
     saving: false,
     error: null,
@@ -255,11 +260,15 @@ export const useModelStore = create<ModelState>((set, get) => {
         highlightJoints: false,
       })
       try {
-        const model = await fetchModel(id)
-        set({ model, warnings: recomputeWarnings(model), loading: false })
+        const row = await fetchModelRow(id)
+        set({ model: row.doc, jobId: row.job_id, warnings: recomputeWarnings(row.doc), loading: false })
       } catch (e) {
         set({ loading: false, error: e instanceof Error ? e.message : 'failed to load model' })
       }
+    },
+
+    setJobId(jobId) {
+      set({ jobId })
     },
 
     async dispatch(ops) {

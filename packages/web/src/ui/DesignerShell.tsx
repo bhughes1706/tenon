@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import {
   MousePointer2, Plus, Ruler, Layers, AlertTriangle, List,
   Undo2, Redo2, Moon, Sun, Hammer, Search, Move3d, RotateCw,
-  Highlighter,
+  Highlighter, ChevronDown, Pencil, Link2, Link2Off, Trash2,
 } from 'lucide-react'
 import type { Board, Warning } from '@tenon/core'
 import { generateCutlist, fmtFraction } from '@tenon/core'
@@ -13,10 +14,12 @@ import { buildCutlistOpts, cutlistToCsv, downloadCsv, printCutlist } from '../li
 import { useModelStore, type DesignerPanel } from '../lib/modelStore.js'
 import { liveMembers } from '../lib/groups.js'
 import { JOINT_TYPE_LABELS } from '../lib/jointTypes.js'
+import { updateModelMeta as patchModelMeta, deleteModel as deleteModelApi } from '../lib/jobsApi.js'
 import { CommandPalette } from './CommandPalette.js'
 import { Viewport } from '../viewport/Viewport.js'
 import { Inspector } from './Inspector.js'
 import { AddBoardDialog } from './AddBoardDialog.js'
+import { AssignJobDialog } from './AssignJobDialog.js'
 import { JointDialog } from './JointDialog.js'
 import { ViewportContextMenu } from './ViewportContextMenu.js'
 
@@ -57,6 +60,95 @@ function TopBtn({ onClick, title, active, disabled, children }: {
   )
 }
 
+const menuItemStyle: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 'var(--sp-2)',
+  padding: 'var(--sp-2) var(--sp-3)', fontSize: 'var(--text-sm)', color: 'var(--text)',
+  borderRadius: 'var(--radius-s)', cursor: 'pointer', outline: 'none',
+}
+
+// Model-level actions (rename / job assignment / delete) — separate from the
+// board/joint ops pipeline: rename goes through set_model_meta (undoable, rev-
+// consistent); job assignment is a PATCH on the `models` row (job_id lives there,
+// not in the doc); delete has no undo, hence the confirm.
+function ModelMenu({ modelName, jobId }: { modelName: string; jobId: string | null }) {
+  const navigate = useNavigate()
+  const [assignOpen, setAssignOpen] = useState(false)
+
+  const rename = () => {
+    const next = window.prompt('Rename model', modelName)
+    if (next && next.trim() && next.trim() !== modelName) {
+      void useModelStore.getState().dispatch([{ op: 'set_model_meta', patch: { name: next.trim() } }])
+    }
+  }
+
+  const unassign = async () => {
+    const id = useModelStore.getState().modelId
+    if (!id) return
+    await patchModelMeta(id, { job_id: null })
+    useModelStore.getState().setJobId(null)
+  }
+
+  const assign = async (newJobId: string) => {
+    const id = useModelStore.getState().modelId
+    if (!id) return
+    await patchModelMeta(id, { job_id: newJobId })
+    useModelStore.getState().setJobId(newJobId)
+    setAssignOpen(false)
+  }
+
+  const remove = async () => {
+    const id = useModelStore.getState().modelId
+    if (!id) return
+    if (!window.confirm(`Delete "${modelName}"? This can't be undone.`)) return
+    await deleteModelApi(id)
+    navigate('/models')
+  }
+
+  return (
+    <>
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger asChild>
+          <button style={{
+            fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text)',
+            display: 'flex', alignItems: 'center', gap: 4, padding: '0 var(--sp-2)', height: 26,
+            borderRadius: 'var(--radius-s)', border: 'none', background: 'transparent', cursor: 'pointer',
+            maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            <span>{modelName}</span> <ChevronDown size={12} />
+          </button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content align="start" sideOffset={4} style={{
+            minWidth: 200, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)',
+            borderRadius: 'var(--radius-l)', boxShadow: '0 16px 48px rgba(0,0,0,0.4)',
+            padding: 'var(--sp-1)', zIndex: 210,
+          }}>
+            <DropdownMenu.Item style={menuItemStyle} onSelect={rename}>
+              <Pencil size={14} /> Rename
+            </DropdownMenu.Item>
+            <DropdownMenu.Item style={menuItemStyle} onSelect={() => setAssignOpen(true)}>
+              <Link2 size={14} /> Assign to job…
+            </DropdownMenu.Item>
+            {jobId && (
+              <DropdownMenu.Item style={menuItemStyle} onSelect={() => void unassign()}>
+                <Link2Off size={14} /> Unassign from job
+              </DropdownMenu.Item>
+            )}
+            <DropdownMenu.Separator style={{ height: 1, background: 'var(--border)', margin: 'var(--sp-1) 0' }} />
+            <DropdownMenu.Item
+              style={{ ...menuItemStyle, color: 'var(--danger)' }}
+              onSelect={() => void remove()}
+            >
+              <Trash2 size={14} /> Delete model
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+      <AssignJobDialog open={assignOpen} onClose={() => setAssignOpen(false)} onAssign={(id) => void assign(id)} />
+    </>
+  )
+}
+
 // A compact labelled slider for the viewport's joint-view overlay (explode / isolate).
 function ViewSlider({ label, value, active, muted, title, onChange }: {
   label: string; value: number; active: boolean; muted?: boolean; title: string
@@ -87,6 +179,7 @@ export function DesignerShell() {
   const [paletteOpen, setPaletteOpen] = useState(false)
 
   const model = useModelStore((s) => s.model)
+  const jobId = useModelStore((s) => s.jobId)
   const loading = useModelStore((s) => s.loading)
   const error = useModelStore((s) => s.error)
   const toast = useModelStore((s) => s.toast)
@@ -209,14 +302,8 @@ export function DesignerShell() {
         padding: '0 var(--sp-3)', gap: 'var(--sp-1)',
         background: 'var(--surface-raised)', borderBottom: '1px solid var(--border)',
       }}>
-        <button onClick={() => navigate('/models')} style={{
-          fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text)',
-          display: 'flex', alignItems: 'center', gap: 4, padding: '0 var(--sp-2)', height: 26,
-          borderRadius: 'var(--radius-s)', border: 'none', background: 'transparent', cursor: 'pointer',
-          maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}>
-          ◧ <span>{model?.name ?? 'Model'}</span>
-        </button>
+        <TopBtn title="Back to models" onClick={() => navigate('/models')}><span style={{ fontSize: 14 }}>◧</span></TopBtn>
+        <ModelMenu modelName={model?.name ?? 'Model'} jobId={jobId} />
 
         <div style={{ width: 1, height: 16, background: 'var(--border-strong)', margin: '0 2px' }} />
         <TopBtn title="Undo (⌘Z)" disabled={!canUndo} onClick={() => void store().undo()}><Undo2 size={14} /></TopBtn>

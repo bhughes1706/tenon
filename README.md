@@ -88,14 +88,10 @@ DATA_DIR="$PWD/data" PORT=3000 NODE_ENV=development node packages/server/dist/in
 corepack pnpm --filter @tenon/web dev
 ```
 
-Create a model to open in the designer (no UI create flow yet):
-
-```bash
-MID=$(curl -s -X POST http://localhost:3000/api/models \
-  -H 'Content-Type: application/json' -d '{"name":"Test"}' \
-  | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
-open "http://localhost:5173/designer/$MID"
-```
+Open `http://localhost:5173/models` and click **New model** — it creates an
+"Untitled" model and drops you straight into the designer, no job required.
+Rename, assign to a job, unassign, or delete from the model-name menu in the
+designer topbar.
 
 ---
 

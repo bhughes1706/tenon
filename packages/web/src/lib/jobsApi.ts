@@ -58,6 +58,7 @@ export interface Hardware {
 
 export interface ModelMeta {
   id: string
+  job_id: string | null
   name: string
   rev: number
   thumbnail: string | null
@@ -112,6 +113,16 @@ export const createTimeLog = (jobId: string, data: { minutes: number; category?:
 
 export const getModels = (jobId?: string) =>
   apiFetch<ModelMeta[]>(`/api/models${jobId ? `?job_id=${jobId}` : ''}`)
+
+export const createModel = (data: { name: string; job_id?: string }) =>
+  apiFetch<ModelMeta>('/api/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+
+// `job_id: null` explicitly clears the assignment; omitting the key leaves it untouched.
+export const updateModelMeta = (id: string, patch: { name?: string; job_id?: string | null }) =>
+  apiFetch<ModelMeta>(`/api/models/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
+
+export const deleteModel = (id: string) =>
+  apiFetch<void>(`/api/models/${id}`, { method: 'DELETE' })
 
 export const STATUS_LABELS: Record<JobStatus, string> = {
   lead: 'Lead', bid: 'Bid', accepted: 'Accepted',

@@ -12,10 +12,14 @@ export interface ModelRow {
   updated_at: string
 }
 
-export async function fetchModel(id: string): Promise<Model> {
+export async function fetchModelRow(id: string): Promise<ModelRow> {
   const res = await fetch(`/api/models/${id}`)
   if (!res.ok) throw new Error(`model ${id}: ${res.status}`)
-  const row = (await res.json()) as ModelRow
+  return (await res.json()) as ModelRow
+}
+
+export async function fetchModel(id: string): Promise<Model> {
+  const row = await fetchModelRow(id)
   // doc.rev is kept in sync with the row by the ops endpoint (§3.3) — it is the
   // authoritative revision the next op must carry as expected_rev.
   return row.doc
