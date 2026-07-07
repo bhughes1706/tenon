@@ -16,9 +16,13 @@ import {
   makeJobId, makeClientId, makeNoteId, makeTimeLogId, makePhotoId,
 } from '@tenon/core'
 
-// §16.6: append mutating tool calls to mcp-audit.log (pino NDJSON)
+// §16.6: append mutating tool calls to mcp-audit.log (pino NDJSON).
+// sync:true — this is an audit trail, so it must survive a crash. The default
+// async destination buffers and would drop the most recent lines on the exact
+// failure you'd want them for; the write volume here is far too low to care about
+// the throughput cost of synchronous writes.
 export function makeAuditLog(dataDir: string): pino.Logger {
-  return pino({ level: 'info' }, pino.destination(path.join(dataDir, 'mcp-audit.log')))
+  return pino({ level: 'info' }, pino.destination({ dest: path.join(dataDir, 'mcp-audit.log'), sync: true }))
 }
 
 type ContentBlock =
@@ -110,7 +114,10 @@ function buildMcpServer(auditLog: pino.Logger, dataDir: string): McpServer {
 
   // ── update_job ────────────────────────────────────────────────────────────
   server.registerTool('update_job', {
-    description: 'Patch job fields. All fields are optional.',
+    description:
+      'Patch job fields. All fields are optional; omitted fields keep their current value. ' +
+      'Nullable fields such as due_date cannot be cleared through this tool — sending an empty ' +
+      'string stores the literal empty string, not NULL.',
     inputSchema: {
       job_id: z.string(),
       title: z.string().optional(),
@@ -195,9 +202,12 @@ function buildMcpServer(auditLog: pino.Logger, dataDir: string): McpServer {
     const db = getDb()
     if (!db.prepare('SELECT id FROM jobs WHERE id = ?').get(job_id)) return err('job not found')
 
+    // `since` is a pagination cursor, so it MUST filter on the same expression the
+    // rows are ordered by — otherwise a client paginating on the last row's
+    // timestamp skips or duplicates photos taken and uploaded at different times.
     const params: unknown[] = [job_id]
     let sql = 'SELECT * FROM photos WHERE job_id = ?'
-    if (since) { sql += ' AND uploaded_at > ?'; params.push(since) }
+    if (since) { sql += ' AND COALESCE(taken_at, uploaded_at) > ?'; params.push(since) }
     sql += ' ORDER BY COALESCE(taken_at, uploaded_at) DESC LIMIT ?'
     params.push(limit)
 
@@ -208,13 +218,23 @@ function buildMcpServer(auditLog: pino.Logger, dataDir: string): McpServer {
 
     const content: ContentBlock[] = []
     for (const photo of photos) {
-      content.push(text({ id: photo.id, caption: photo.caption, taken_at: photo.taken_at, uploaded_at: photo.uploaded_at }))
+      let imageBlock: ContentBlock | null = null
+      let thumbMissing = false
       if (photo.thumb_path) {
         const abs = path.isAbsolute(photo.thumb_path) ? photo.thumb_path : path.join(dataDir, photo.thumb_path)
         if (fs.existsSync(abs)) {
-          content.push({ type: 'image', data: fs.readFileSync(abs).toString('base64'), mimeType: 'image/webp' })
+          imageBlock = { type: 'image', data: fs.readFileSync(abs).toString('base64'), mimeType: 'image/webp' }
+        } else {
+          // The row exists but the thumb file is gone — flag it so Claude doesn't
+          // narrate a photo set as if it saw an image that wasn't returned.
+          thumbMissing = true
         }
       }
+      content.push(text({
+        id: photo.id, caption: photo.caption, taken_at: photo.taken_at, uploaded_at: photo.uploaded_at,
+        ...(thumbMissing ? { thumb_missing: true } : {}),
+      }))
+      if (imageBlock) content.push(imageBlock)
     }
     return { content }
   })
@@ -232,13 +252,11 @@ function buildMcpServer(auditLog: pino.Logger, dataDir: string): McpServer {
     const db = getDb()
     if (!db.prepare('SELECT id FROM jobs WHERE id = ?').get(job_id)) return err('job not found')
 
-    let buf: Buffer
-    try {
-      buf = Buffer.from(image, 'base64')
-      if (buf.length === 0) throw new Error('empty buffer')
-    } catch {
-      return err('invalid base64 image data')
-    }
+    // Buffer.from(_, 'base64') never throws — it silently drops non-base64 chars —
+    // so the only cheap check here is "did anything decode". Real format validation
+    // (is it actually a JPEG/PNG) happens in processPhoto via sharp below.
+    const buf = Buffer.from(image, 'base64')
+    if (buf.length === 0) return err('invalid base64 image data: decoded to an empty buffer')
 
     const photoId = makePhotoId()
     let result
@@ -310,9 +328,16 @@ function buildMcpServer(auditLog: pino.Logger, dataDir: string): McpServer {
       ops: z.array(z.record(z.unknown())).min(1),
     },
   }, async ({ model_id, expected_rev, ops }) => {
-    auditLog.info({ tool: 'apply_model_ops', model_id, expected_rev, op_count: ops.length }, 'mcp mutating call')
     const outcome = applyOpsCommit(model_id, expected_rev, ops)
     if (!outcome) return err('model not found — use list_models for valid ids')
+    // Audit AFTER the commit so the trail records what actually happened, not just
+    // an attempt: the op-type summary answers "what did Claude change", and ok/rev
+    // distinguish a committed batch from a rejected one (rev conflict or validation).
+    auditLog.info({
+      tool: 'apply_model_ops', model_id, expected_rev,
+      ops: ops.map((o) => (o as { op?: unknown }).op ?? '?'),
+      ok: outcome.result.ok, rev: outcome.result.rev,
+    }, 'mcp mutating call')
     // ok:false is a VALID, teaching response Claude should read and self-correct
     // from (§11.4) — not an MCP-level error.
     return { content: [text(outcome.result)] }
@@ -350,7 +375,14 @@ function buildMcpServer(auditLog: pino.Logger, dataDir: string): McpServer {
       width: z.number().int().min(200).max(1600).default(900),
     },
   }, async ({ model_id, view, highlight, width }) => {
-    if (!loadModel(model_id)) return err('model not found — use list_models for valid ids')
+    // loadModel throws on a corrupt/unmigrated doc — catch it into the same err()
+    // shape render failures use, so this tool never leaks two formats for one class
+    // of failure.
+    try {
+      if (!loadModel(model_id)) return err('model not found — use list_models for valid ids')
+    } catch (e) {
+      return err(`model load failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
     let png: Buffer
     try {
       png = await renderModelView({ modelId: model_id, view, highlight, width })

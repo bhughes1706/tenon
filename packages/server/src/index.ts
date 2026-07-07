@@ -40,6 +40,14 @@ const auditLog = makeAuditLog(dataDir)
 const app = express()
 app.use(express.json({ limit: '1mb' }))
 
+// Trust the loopback proxy only. Tailscale serve/Funnel proxies from localhost and
+// sets X-Forwarded-For; without this, express-rate-limit v7 THROWS
+// (ERR_ERL_UNEXPECTED_X_FORWARDED_FOR) on every proxied request — i.e. /mcp works
+// locally but 500s the moment it's behind the Funnel. Trusting loopback also makes
+// req.ip resolve to the real client from X-Forwarded-For, so the /mcp rate limit is
+// actually per-client instead of a single global bucket.
+app.set('trust proxy', 'loopback')
+
 // Disable "X-Powered-By: Express" header
 app.disable('x-powered-by')
 
@@ -66,11 +74,9 @@ app.use('/api', makePhotosRouter(dataDir))
 app.use('/api', hardwareRouter)
 
 // ── MCP (/mcp) — Tailscale Funnel-exposed, bearer token required (§16.6) ─────
-// §16.6: 60 req/min per IP; render_view gets an additional 10/min cap (chunk 14)
-// NOTE: Tailscale Funnel proxies to localhost, so req.ip is always 127.0.0.1 —
-// this rate limit is effectively a single global cap, not per-client. The bearer
-// token is the primary gate; the rate limit is defense-in-depth against the auth
-// check itself being hammered before a 401 is returned.
+// §16.6: 60 req/min per IP overall. With `trust proxy` set above, req.ip is the
+// real client, so this is genuinely per-client. Runs before bearerAuth as
+// defense-in-depth — the auth check itself can't be hammered before a 401.
 const mcpRateLimit = rateLimit({
   windowMs: 60 * 1000,
   max: 60,
@@ -79,7 +85,25 @@ const mcpRateLimit = rateLimit({
   message: { error: 'Too many requests, please try again later.' },
 })
 
-app.use('/mcp', mcpRateLimit, bearerAuth(), async (req, res, next) => {
+// §16.6: render_view is additionally capped at 10/min — Puppeteer software-GL
+// renders are the one expensive tool. express.json already parsed the body, so we
+// gate on the JSON-RPC tool name; every other call skips this limiter. Placed AFTER
+// bearerAuth so only authenticated render calls consume the budget — an unauthorized
+// flood can't lock the real user out of rendering (it's still bounded by the 60/min
+// cap above and 401'd regardless).
+const renderRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'render_view rate limit (10/min) exceeded, please try again later.' },
+  skip: (req) => {
+    const body = req.body as { method?: string; params?: { name?: string } } | undefined
+    return !(body?.method === 'tools/call' && body.params?.name === 'render_view')
+  },
+})
+
+app.use('/mcp', mcpRateLimit, bearerAuth(), renderRateLimit, async (req, res, next) => {
   try {
     await handleMcpRequest(req, res, auditLog, dataDir)
   } catch (err) {
