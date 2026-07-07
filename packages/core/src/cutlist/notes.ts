@@ -91,13 +91,47 @@ function jointNote(joint: Joint, a: Board, b: Board, push: Push, f: (n: number) 
       if (p.snap_to_tool !== false) thk = Math.round(thk / (1 / 16)) * (1 / 16) // snap 1/16 (§5.6)
       thk = Math.min(thk, a.dims.t)
       const sh = p.width_shoulders ?? [3 / 8, 3 / 8]
-      const width = Math.max(0, b.dims.w - (sh[0] ?? 0) - (sh[1] ?? 0))
+      // Width layout mirrors the carve (docs/chunk12-design.md §2/§5), approximated from
+      // board dims: the haunch band replaces its side's shoulder (default L = U/4), and
+      // twin splits the remainder into tenon/gap/tenon thirds.
+      const haunch = p.haunch ?? 'none'
+      let usable = Math.max(0, b.dims.w - (sh[0] ?? 0) - (sh[1] ?? 0))
+      let haunchLen = 0
+      if (haunch !== 'none') {
+        const U = Math.max(0, b.dims.w - Math.min(sh[0] ?? 0, sh[1] ?? 0)) // smaller shoulder survives
+        haunchLen = p.haunch_len ?? U / 4
+        usable = Math.max(0, U - haunchLen)
+      }
+      const width = p.twin ? usable / 3 : usable
       // through vs blind: explicit flag wins; else a given depth means blind, otherwise
       // assume a through tenon (length = the mortised member's thickness).
       const through = typeof p.through === 'boolean' ? p.through : p.depth == null
       const length = through ? a.dims.t : (p.depth ?? a.dims.t)
-      push(a.id, `mortise ${f(thk)} × ${f(width)}, ${through ? 'through' : `${f(length)} deep`}`)
-      push(b.id, `tenon ${f(thk)} × ${f(width)} × ${f(length)}`)
+      const copies = p.twin ? 2 : 1
+      for (let i = 0; i < copies; i++) {
+        push(a.id, `mortise ${f(thk)} × ${f(width)}, ${through ? 'through' : `${f(length)} deep`}`)
+        push(b.id, `tenon ${f(thk)} × ${f(width)} × ${f(length)}`)
+      }
+      if (haunch !== 'none') {
+        // §3.4 live derivation: default haunch depth = the governing groove on a
+        // (approximated dims-only as the deepest groove; carve-exact pick needs overlap).
+        const deepest = a.edge_grooves.reduce((d, g) => Math.max(d, g.depth), 0)
+        const depth = p.haunch_depth ?? (deepest > 0 ? deepest : a.dims.t / 3)
+        push(b.id, `${haunch} haunch ${f(haunchLen)} × ${f(depth)}`)
+      }
+      if (p.wedged && through) {
+        const kerfs = p.wedge_kerfs ?? 2
+        push(a.id, `flare mortise exit 1/8 per side for wedges`)
+        push(b.id, `saw ${kerfs * copies} wedge kerfs, stop 1/2 from shoulder`)
+      }
+      if (p.drawbore) {
+        const dia = p.pin_dia ?? 3 / 8
+        const off = p.drawbore_offset ?? 1 / 16
+        for (let i = 0; i < copies; i++) {
+          push(a.id, `drill ${f(dia)} drawbore`)
+          push(b.id, `drill ${f(dia)} drawbore, offset ${f(off)} toward shoulder`)
+        }
+      }
       return
     }
     // Not carved yet (chunk 18 / deferred) — still flag the joinery for the shop.

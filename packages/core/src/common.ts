@@ -9,6 +9,11 @@ export const WarningCode = {
   // chunk 9 — geometry evaluator
   JOINT_PRECONDITION_FAILED: 'JOINT_PRECONDITION_FAILED', // existing joint no longer satisfies its "requires" row (§2.4 #3)
   JOINT_FEATURE_UNIMPLEMENTED: 'JOINT_FEATURE_UNIMPLEMENTED', // param accepted but its geometry isn't carved yet (§5.6)
+  // chunk 12 — full §5.6 mortise & tenon (docs/chunk12-design.md)
+  HAUNCH_NO_GROOVE: 'HAUNCH_NO_GROOVE', // haunched M&T but no governing edge_groove on the mortised member
+  HAUNCH_GROOVE_MISMATCH: 'HAUNCH_GROOVE_MISMATCH', // haunch stub won't seat in the groove it should fill
+  WEDGE_NEEDS_THROUGH: 'WEDGE_NEEDS_THROUGH', // wedged M&T on a blind mortise — flare/kerfs skipped
+  DRAWBORE_NO_ROOM: 'DRAWBORE_NO_ROOM', // pin setback lands past the tenon — pin skipped
 } as const
 
 export type WarningCode = (typeof WarningCode)[keyof typeof WarningCode]

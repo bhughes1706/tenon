@@ -1,8 +1,52 @@
 # Tenon — Agent Handoff Document
 
-**Date:** 2026-07-02 (chunk 11 COMPLETE — joint dialog / face-pick / lint-resolve / MCP model loop / render_view; chunk 12 = photo capture is next)  
+**Date:** 2026-07-06 (chunk 12 COMPLETE — full §5.6 mortise & tenon: haunch/wedge/drawbore/twin. Numbering note: §15 governs, not this table's old labels — chunk 12 here is the M&T carve, not "photo capture" as previously listed; photo capture shipped in chunk 4. See docs/chunk12-design.md.)  
 **Repo:** https://github.com/bhughes1706/tenon  
 **Spec:** `docs/tenon-spec-v0.4.md` (always load this — it is the ground truth)
+
+---
+
+## ✅ CHUNK 12 — COMPLETE (2026-07-06)
+
+**Read `docs/chunk12-design.md` before touching the M&T carve.** The four §5.6 features
+chunk 10 deferred are now carved; `JOINT_FEATURE_UNIMPLEMENTED` no longer fires for M&T.
+
+1. **New cutter primitive `CutterFrustum`** (`eval/types.ts`): linear sweep between two
+   axis-aligned rects — the wedged mortise's exit flare and the sloped haunch are not
+   boxes. `Cutter = CutterBox | CutterFrustum` flows through `CutterSet`/`evaluate`;
+   built via `Manifold.hull(8 corners).asOriginal()` (provenance keeps working); its own
+   overcut rules (`solids.ts overcutFrustumToBoard`, 2 rules — see design doc §1);
+   `carveKey` serializes it (memo just works). **Frustum helpers live in `types.ts`, NOT
+   `solids.ts`** — `joints/util.ts` and `markers.ts` import them, and that chain must stay
+   clear of WASM-adjacent modules for the server grep-invariant.
+2. **M&T rewrite** (`joints/mortiseTenon.ts`): one internal `layout()` derives everything
+   (bands, through/blind, haunch side + governing groove, twin thirds, pin placement);
+   the carve and the exported `drawborePins()` (markers seam) share it. Haunch depth
+   derives from the **governing edge groove** on a (§3.4 live derivation — entry face →
+   groove edge name, best slot-band overlap; nearest-on-edge fallback so a misaligned
+   groove warns `HAUNCH_GROOVE_MISMATCH` instead of pretending there's no groove). The
+   haunch **socket cutter is always emitted** — coplanar with a matching groove it unions
+   to a no-op. Haunch band **replaces** its side's width shoulder (`L = U/4` default).
+   Twin = usable width in thirds. Wedged requires through (`WEDGE_NEEDS_THROUGH`),
+   flares 1/8/side at the exit, kerfs (feature kind `'kerf'`, new) stop 1/2 from the
+   shoulder. New warning codes: `HAUNCH_NO_GROOVE`, `HAUNCH_GROOVE_MISMATCH`,
+   `WEDGE_NEEDS_THROUGH`, `DRAWBORE_NO_ROOM`.
+3. **Drawbore = markers, not carve** (`eval/markers.ts`, exported as
+   **`@tenon/core/markers`** — a NEW package subpath, deliberately not on the base entry
+   (server bundle grep) nor `/eval` (WASM)). `jointMarkers(model)` → world-space ghost-pin
+   cylinders; `Viewport.tsx GhostPins` renders them translucent (amber when the joint is
+   selected), hidden while exploded. The module is the seam for butt fastener ghosts
+   (chunk 11 leftover, still TODO).
+4. **Cut list** (`cutlist/notes.ts`): haunch/wedge-kerf/drawbore-drill notes; twin doubles
+   mortise/tenon notes at U/3 width. Wedge/pin **stock** is still not a cut-list line item.
+5. **UI**: `JointParamsForm` unhid all nine params (haunch select + depth/len, wedged +
+   kerfs, drawbore + pin dia/offset, twin). Params were already in the chunk-2 schema —
+   note the schema name is `drawbore_offset` (spec table says `offset`).
+6. **Tests**: property suite +21 (analytic trapezoid volumes for both haunches, wedged
+   flare+kerfs, twin, socket-coplanar-with-groove, all 4 new warnings, placement); golden
+   +3 (haunched square/sloped, wedged twin — the frustum carves are new kernel surface);
+   `markers.test.ts` (3); notes +2. core 186 ✓ / web 89 ✓ / server 27 ✓; web vite build ✓;
+   server dist manifold refs = 0 ✓.
 
 ---
 
@@ -497,8 +541,8 @@ This does not block chunk 9. It can be applied as a one-commit patch at any poin
 | ~~9~~ | ~~Manifold WASM geometry evaluator in web worker; joint evaluation pipeline; housing/rabbet/half-lap/bridle/butt/M&T (box/dovetail deferred)~~ | **DONE** |
 | ~~10~~ | ~~Cut list (board → rough stock → waste factors), species cost, materials summary~~ | **DONE** (minimal-engine scope; glue-up/movement + `get_cutlist` MCP deferred) |
 | ~~11~~ | ~~Joint dialog + lint resolve flow; face-pick; MCP model loop; `render_view`~~ | **DONE** |
-| **12** | **Photo capture tab (camera API, phone-first)** | 6 — **NEXT CHUNK** |
-| 13 | Bid engine (materials + hardware + labor + overhead + margin), `estimate_bid` MCP tool | 10 |
+| ~~12~~ | ~~Mortise & tenon (full §5.6 param set)~~ | **DONE** (photo capture shipped in chunk 4; see the numbering note at the top of this doc) |
+| 13 | `apply_model_ops`/`get_model`/`validate_model` MCP + "errors must teach" pass | 9, 4 — **NEXT CHUNK** |
 | 14–18 | Settings screen full impl, 3D print export (3MF), co-designer polish, doc migrations | various |
 
 **Phase boundary:** Chunks 1–6 = Phase 1 ("Foundation") — the spec's survival milestone. Jobs/photos/MCP is a complete usable product. **Chunk 7 begins Phase 2 ("Assembly").**

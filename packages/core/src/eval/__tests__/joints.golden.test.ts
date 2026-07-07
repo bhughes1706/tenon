@@ -11,6 +11,7 @@ import { board, jointModel, meshVolume, meshBBox, triCount } from './fixtures.js
 
 interface Golden {
   name: JointType
+  label?: string // distinguishes multiple fixtures of one joint type
   a: Board
   b: Board
   params?: Record<string, unknown>
@@ -47,13 +48,41 @@ const GOLDENS: Golden[] = [
     a: board({ id: 'brd_a', l: 4, w: 4, t: 1.5, pos: [0, 0, 0] }),
     b: board({ id: 'brd_b', l: 4, w: 3, t: 1.5, pos: [0, 0, 1.25], rot: [0, 90, 0] }),
   },
+  // ── chunk 12 (docs/chunk12-design.md): the frustum carves are new kernel surface ──
+  {
+    name: 'mortise_tenon',
+    label: 'mortise_tenon (square haunch, grooved stile)',
+    a: board({
+      id: 'brd_a', l: 24, w: 2.5, t: 0.75, pos: [0, 0, 0],
+      edge_grooves: [{ id: 'egv_panel', edge: 'top', depth: 0.375, width: 0.25, offset: 0 }],
+    }),
+    b: board({ id: 'brd_b', l: 6, w: 3, t: 0.75, pos: [10.5, 3, 0], rot: [0, 0, 90] }),
+    params: { haunch: 'square' },
+  },
+  {
+    name: 'mortise_tenon',
+    label: 'mortise_tenon (sloped haunch)',
+    a: board({
+      id: 'brd_a', l: 24, w: 2.5, t: 0.75, pos: [0, 0, 0],
+      edge_grooves: [{ id: 'egv_panel', edge: 'top', depth: 0.375, width: 0.25, offset: 0 }],
+    }),
+    b: board({ id: 'brd_b', l: 6, w: 3, t: 0.75, pos: [10.5, 3, 0], rot: [0, 0, 90] }),
+    params: { haunch: 'sloped' },
+  },
+  {
+    name: 'mortise_tenon',
+    label: 'mortise_tenon (wedged twin through)',
+    a: board({ id: 'brd_a', l: 4, w: 4, t: 1.5, pos: [0, 0, 0] }),
+    b: board({ id: 'brd_b', l: 4, w: 3, t: 1.5, pos: [0, 0, 1.25], rot: [0, 90, 0] }),
+    params: { wedged: true, twin: true },
+  },
 ]
 
 const round6 = (n: number): number => Math.round(n * 1e6) / 1e6
 
 describe('joint golden carves (kernel-drift canary)', () => {
   for (const g of GOLDENS) {
-    it(`${g.name}`, async () => {
+    it(`${g.label ?? g.name}`, async () => {
       const { boards } = await evaluate(jointModel(g.a, g.b, g.name, g.params))
       const snap = boards.map(({ id, mesh }) => ({
         id,

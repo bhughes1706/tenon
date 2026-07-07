@@ -18,10 +18,13 @@
 // the recipes' logic is unchanged; "W" now reads "in the pair frame".
 
 import {
+  applyMat3,
   eulerXYZToMat3,
+  matMul,
   overlapRegion,
   reframeBox,
   pairFrame,
+  transpose,
   extent,
   center,
   type AABB,
@@ -29,7 +32,8 @@ import {
 } from '../../geometry/aabb.js'
 import type { Board } from '../../board.js'
 import { WarningCode, type Warning } from '../../common.js'
-import type { BoardSolid, CutterBox, CutFeatureKind } from '../types.js'
+import type { BoardSolid, CutterBox, CutterFrustum, CutFeatureKind } from '../types.js'
+import { frustumCorners, frustumRectAxes } from '../types.js'
 
 export { extent, center }
 export type { AABB, Vec3 }
@@ -114,6 +118,54 @@ export const spanBox = (s: Spans): AABB => ({
 export function toLocal(s: BoardSolid, box: AABB, feature: CutFeatureKind): CutterBox {
   const loc = reframeBox(box, s.frame.pos, s.frame.rot, s.board.transform.pos, eulerXYZToMat3(...s.board.transform.rot))
   return { min: loc.min, max: loc.max, feature }
+}
+
+// Pair-frame frustum cutter → target board's LOCAL frame (docs/chunk12-design.md §1).
+// Same transform as toLocal — a signed permutation for mutually-square pairs — applied to
+// the 8 corners and rebuilt: regrouping by station handles axis remaps, station flips, and
+// rect min/max swaps without case analysis. For board a it is the identity (pair frame IS
+// a's local frame).
+export function toLocalFrustum(
+  s: BoardSolid,
+  f: Omit<CutterFrustum, 'frustum' | 'feature'>,
+  feature: CutFeatureKind,
+): CutterFrustum {
+  const full: CutterFrustum = { frustum: true, feature, ...f }
+  const targetRot = eulerXYZToMat3(...s.board.transform.rot)
+  const compose = matMul(transpose(targetRot), s.frame.rot)
+  const offset = applyMat3(transpose(targetRot), [
+    s.frame.pos[0] - s.board.transform.pos[0],
+    s.frame.pos[1] - s.board.transform.pos[1],
+    s.frame.pos[2] - s.board.transform.pos[2],
+  ])
+  const map = (p: Vec3): Vec3 => {
+    const r = applyMat3(compose, p)
+    return [r[0] + offset[0], r[1] + offset[1], r[2] + offset[2]]
+  }
+  // Corners come out 4-per-station in order (lo group first — see frustumCorners).
+  const corners = frustumCorners(full).map(map)
+  // New sweep axis = image of the old one under the (signed-permutation) rotation.
+  const unit: Vec3 = [0, 0, 0]
+  unit[f.axis] = 1
+  const newAxis = dominantAxis(applyMat3(compose, unit))
+  const [u, v] = frustumRectAxes(newAxis)
+  const rectOf = (group: Vec3[]) => ({
+    min: [Math.min(...group.map((p) => p[u])), Math.min(...group.map((p) => p[v]))] as [number, number],
+    max: [Math.max(...group.map((p) => p[u])), Math.max(...group.map((p) => p[v]))] as [number, number],
+  })
+  const groupA = corners.slice(0, 4)
+  const groupB = corners.slice(4)
+  const sA = groupA[0][newAxis]
+  const sB = groupB[0][newAxis]
+  const [loGroup, hiGroup, lo, hi] = sA <= sB ? [groupA, groupB, sA, sB] : [groupB, groupA, sB, sA]
+  return {
+    frustum: true,
+    axis: newAxis,
+    span: [lo, hi],
+    rectLo: rectOf(loGroup),
+    rectHi: rectOf(hiGroup),
+    feature,
+  }
 }
 
 // A param the schema accepts but the carve doesn't realize yet (§5.6 M&T

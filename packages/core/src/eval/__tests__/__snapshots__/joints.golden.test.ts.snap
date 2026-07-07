@@ -156,6 +156,123 @@ exports[`joint golden carves (kernel-drift canary) > housing 1`] = `
 ]
 `;
 
+exports[`joint golden carves (kernel-drift canary) > mortise_tenon (sloped haunch) 1`] = `
+[
+  {
+    "bbox": {
+      "max": [
+        12,
+        1.25,
+        0.375,
+      ],
+      "min": [
+        -12,
+        -1.25,
+        -0.375,
+      ],
+    },
+    "id": "brd_a",
+    "tris": 60,
+    "volume": 42.319336,
+  },
+  {
+    "bbox": {
+      "max": [
+        3,
+        1.5,
+        0.375,
+      ],
+      "min": [
+        -3,
+        -1.5,
+        -0.375,
+      ],
+    },
+    "id": "brd_b",
+    "tris": 46,
+    "volume": 11.333958,
+  },
+]
+`;
+
+exports[`joint golden carves (kernel-drift canary) > mortise_tenon (square haunch, grooved stile) 1`] = `
+[
+  {
+    "bbox": {
+      "max": [
+        12,
+        1.25,
+        0.375,
+      ],
+      "min": [
+        -12,
+        -1.25,
+        -0.375,
+      ],
+    },
+    "id": "brd_a",
+    "tris": 62,
+    "volume": 42.319336,
+  },
+  {
+    "bbox": {
+      "max": [
+        3,
+        1.5,
+        0.375,
+      ],
+      "min": [
+        -3,
+        -1.5,
+        -0.375,
+      ],
+    },
+    "id": "brd_b",
+    "tris": 46,
+    "volume": 11.364258,
+  },
+]
+`;
+
+exports[`joint golden carves (kernel-drift canary) > mortise_tenon (wedged twin through) 1`] = `
+[
+  {
+    "bbox": {
+      "max": [
+        2,
+        2,
+        0.75,
+      ],
+      "min": [
+        -2,
+        -2,
+        -0.75,
+      ],
+    },
+    "id": "brd_a",
+    "tris": 52,
+    "volume": 22.6875,
+  },
+  {
+    "bbox": {
+      "max": [
+        2,
+        1.5,
+        0.75,
+      ],
+      "min": [
+        -2,
+        -1.5,
+        -0.75,
+      ],
+    },
+    "id": "brd_b",
+    "tris": 118,
+    "volume": 12.25,
+  },
+]
+`;
+
 exports[`joint golden carves (kernel-drift canary) > mortise_tenon 1`] = `
 [
   {

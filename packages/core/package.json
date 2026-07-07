@@ -13,6 +13,10 @@
     "./eval": {
       "import": "./dist/eval/index.js",
       "types": "./dist/eval/index.d.ts"
+    },
+    "./markers": {
+      "import": "./dist/eval/markers.js",
+      "types": "./dist/eval/markers.d.ts"
     }
   },
   "scripts": {

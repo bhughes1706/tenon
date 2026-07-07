@@ -42,6 +42,42 @@ describe('machiningNotes', () => {
     expect(machiningNotes(m).get('brd_a')).toEqual(['mortise 1/4 × 2-1/4, 1 deep'])
   })
 
+  it('chunk 12 M&T: haunch (groove-derived depth), wedge, and drawbore notes', () => {
+    const stile = board({
+      id: 'brd_a',
+      dims: { l: 30, w: 2, t: 1.5 },
+      edge_grooves: [{ id: 'egv_1', edge: 'top', depth: 0.375, width: 0.25, offset: 0, stopped: false, stop_near: null, stop_far: null }],
+    })
+    const rail = board({ id: 'brd_b', dims: { l: 20, w: 3, t: 0.75 } })
+    const m = model(
+      [stile, rail],
+      [joint('mortise_tenon', 'brd_a', 'brd_b', { haunch: 'square', haunch_len: 0.75, wedged: true, drawbore: true })],
+    )
+    const notes = machiningNotes(m)
+    // usable width = (3 − 3/8) − 3/4 haunch = 1.875; haunch depth = the stile's groove (3/8).
+    expect(notes.get('brd_a')).toEqual([
+      'groove 1/4 × 3/8, top',
+      'mortise 1/4 × 1-7/8, through',
+      'flare mortise exit 1/8 per side for wedges',
+      'drill 3/8 drawbore',
+    ])
+    expect(notes.get('brd_b')).toEqual([
+      'tenon 1/4 × 1-7/8 × 1-1/2',
+      'square haunch 3/4 × 3/8',
+      'saw 2 wedge kerfs, stop 1/2 from shoulder',
+      'drill 3/8 drawbore, offset 1/16 toward shoulder',
+    ])
+  })
+
+  it('chunk 12 M&T: twin splits the usable width into thirds and doubles the notes', () => {
+    const stile = board({ id: 'brd_a', dims: { l: 30, w: 2, t: 1.5 } })
+    const rail = board({ id: 'brd_b', dims: { l: 20, w: 3, t: 0.75 } })
+    const m = model([stile, rail], [joint('mortise_tenon', 'brd_a', 'brd_b', { twin: true })])
+    const notes = machiningNotes(m)
+    expect(notes.get('brd_a')).toEqual(['mortise 1/4 × 3/4, through ×2'])
+    expect(notes.get('brd_b')).toEqual(['tenon 1/4 × 3/4 × 1-1/2 ×2'])
+  })
+
   it('rabbet and dado note the receiving board (a) with width × depth', () => {
     const side = board({ id: 'brd_a', dims: { l: 30, w: 10, t: 0.75 } })
     const back = board({ id: 'brd_b', dims: { l: 30, w: 10, t: 0.5 } })

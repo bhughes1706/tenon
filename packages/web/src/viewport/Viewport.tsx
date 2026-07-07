@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber'
 import { OrbitControls, TransformControls, Line, Html } from '@react-three/drei'
 import * as THREE from 'three'
-import type { Board } from '@tenon/core'
+import type { Board, Model } from '@tenon/core'
 import { worldAABB } from '@tenon/core'
+import { jointMarkers } from '@tenon/core/markers'
 import { pickJoint, extractJointFaces } from './jointPick.js'
 import { useModelStore } from '../lib/modelStore.js'
 import { setViewportScene, syncViewportTheme } from '../lib/syncViewportTheme.js'
@@ -29,6 +30,47 @@ const VIEW_DIRS: Record<'iso' | 'front' | 'top' | 'right', [number, number, numb
   front: [0, 0, 1],
   top: [0, 1, 0.0001],
   right: [1, 0, 0],
+}
+
+// ── Ghost markers (chunk 12, docs/chunk12-design.md §4) ─────────────────────
+// Drawbore pins: render-only translucent cylinders derived from the model (never
+// carved — the pin fills its hole). Physical wood color, not themed (see
+// viewportResources doctrine); the selected joint's pins tint amber so they read
+// with the joint-face highlight. Hidden while exploded — a pin drawn at its true
+// position under diagrammatically-offset boards would point at nothing.
+const PIN_COLOR = '#8a6a45'
+const UP = new THREE.Vector3(0, 1, 0)
+
+function GhostPins({ model, selectedJointId, jointColor }: {
+  model: Model | null
+  selectedJointId: string | null
+  jointColor: string
+}) {
+  const pins = useMemo(() => {
+    if (!model) return []
+    return jointMarkers(model).map((m) => ({
+      ...m,
+      quaternion: new THREE.Quaternion().setFromUnitVectors(UP, new THREE.Vector3(...m.axis).normalize()),
+    }))
+  }, [model])
+  return (
+    <>
+      {pins.map((p, i) => {
+        const selected = p.jointId === selectedJointId
+        return (
+          <mesh key={i} position={p.center} quaternion={p.quaternion} raycast={voidRaycast}>
+            <cylinderGeometry args={[p.dia / 2, p.dia / 2, p.len, 16]} />
+            <meshStandardMaterial
+              transparent
+              opacity={selected ? 0.75 : 0.4}
+              depthWrite={false}
+              color={selected ? jointColor : PIN_COLOR}
+            />
+          </mesh>
+        )
+      })}
+    </>
+  )
 }
 
 // ── One board ────────────────────────────────────────────────────────────────
@@ -445,6 +487,14 @@ function SceneContents({
           onPointerDown={onPointerDown}
         />
       ))}
+
+      {exploded === 0 && (
+        <GhostPins
+          model={model}
+          selectedJointId={selectedJointId}
+          jointColor={`#${resources.jointMat.color.getHexString()}`}
+        />
+      )}
 
       {measurePts.map((p, i) => (
         <mesh key={i} position={p} raycast={voidRaycast}>

@@ -8,6 +8,7 @@ import { JOINT_FNS } from '../joints/index.js'
 import { pairSolids } from '../joints/util.js'
 import type { Board } from '../../board.js'
 import type { EvalMesh } from '../types.js'
+import { cutterBounds } from '../types.js'
 import type { JointType } from '../../joint.js'
 import {
   board,
@@ -25,11 +26,33 @@ async function carve(model: Parameters<typeof evaluate>[0]): Promise<Map<string,
 // Each fixture: two genuinely-overlapping 90° boards + the analytic removed volumes.
 interface Case {
   name: JointType
+  label?: string // distinguishes multiple fixtures of one joint type
   a: Board
   b: Board
   params?: Record<string, unknown>
   removedA: number
   removedB: number
+}
+
+// ── Chunk 12 fixtures (docs/chunk12-design.md) ────────────────────────────────
+// Frame corner: stile a along x with a panel groove on its inside (+y) edge; rail b
+// enters from +y (rot z 90 → length along y), flush with the stile's +x end. Blind
+// M&T: engagement 1.25 < stile width 2.5. tenonThk = snap(0.75/3) = 0.25 = groove
+// width, centred — the haunch stub seats exactly in the groove.
+const PANEL_GROOVE = { id: 'egv_panel', edge: 'top', depth: 0.375, width: 0.25, offset: 0 }
+const frameStile = (grooves: unknown[] = [PANEL_GROOVE]) =>
+  board({ id: 'brd_a', l: 24, w: 2.5, t: 0.75, pos: [0, 0, 0], edge_grooves: grooves })
+const frameRail = () => board({ id: 'brd_b', l: 6, w: 3, t: 0.75, pos: [10.5, 3, 0], rot: [0, 0, 90] })
+// Width layout: R spans x [9, 12]; far shoulder 3/8 → U = 2.625, haunch L = U/4 =
+// 0.65625, main tenon 1.96875 wide, mortise depth 1.25 (blind), haunch depth 0.375.
+const FRAME = {
+  groove: 24 * 0.375 * 0.25, // board-level channel, full stile length
+  mortise: 0.25 * 1.96875 * 1.25,
+  grooveMortiseOverlap: 1.96875 * 0.375 * 0.25, // mortise mouth crosses the channel
+  cheeks: 0.5 * 3 * 1.25, // (0.75 − 0.25) thick × rail width × engagement
+  shoulder: 0.375 * 1.25 * 0.25, // far-side width shoulder, net of the cheeks
+  squareHaunch: 0.65625 * (1.25 - 0.375) * 0.25, // band beyond the stub, net of cheeks
+  slopedHaunch: 0.25 * 0.65625 * ((1.25 - 0.375) + 1.25) / 2, // trapezoid: stub depth → 0
 }
 
 const CASES: Case[] = [
@@ -81,11 +104,53 @@ const CASES: Case[] = [
     removedA: 0.5 * 2.25 * 1.5,
     removedB: 1.5 * (1.5 * 3 - 0.5 * 2.25),
   },
+  {
+    // §5.6 square haunch: stub fills the groove run-out — the socket unions into the
+    // groove (zero extra volume on a); the mortise mouth crosses the groove channel.
+    name: 'mortise_tenon',
+    label: 'mortise_tenon (square haunch, grooved stile)',
+    a: frameStile(),
+    b: frameRail(),
+    params: { haunch: 'square' },
+    removedA: FRAME.groove + FRAME.mortise - FRAME.grooveMortiseOverlap,
+    removedB: FRAME.cheeks + FRAME.shoulder + FRAME.squareHaunch,
+  },
+  {
+    // §5.6 sloped haunch: the stub tapers to zero at the end grain (frustum carve).
+    name: 'mortise_tenon',
+    label: 'mortise_tenon (sloped haunch)',
+    a: frameStile(),
+    b: frameRail(),
+    params: { haunch: 'sloped' },
+    removedA: FRAME.groove + FRAME.mortise - FRAME.grooveMortiseOverlap, // sloped socket ⊂ groove
+    removedB: FRAME.cheeks + FRAME.shoulder + FRAME.slopedHaunch,
+  },
+  {
+    // §5.6 wedged through M&T: mortise flares 1/8 per side at the exit face (trapezoid
+    // 2.25 → 2.5 wide) + two 1/16 kerfs stopping 1/2 short of the shoulder.
+    name: 'mortise_tenon',
+    label: 'mortise_tenon (wedged through)',
+    a: board({ id: 'brd_a', l: 4, w: 4, t: 1.5, pos: [0, 0, 0] }),
+    b: board({ id: 'brd_b', l: 4, w: 3, t: 1.5, pos: [0, 0, 1.25], rot: [0, 90, 0] }),
+    params: { wedged: true },
+    removedA: 0.5 * 1.5 * ((2.25 + 2.5) / 2),
+    removedB: 1.5 * (1.5 * 3 - 0.5 * 2.25) + 2 * ((1 / 16) * (1.5 - 0.5) * 0.5),
+  },
+  {
+    // §5.6 twin: usable width 2.25 in thirds — two 0.75 tenons, 0.75 gap.
+    name: 'mortise_tenon',
+    label: 'mortise_tenon (twin)',
+    a: board({ id: 'brd_a', l: 4, w: 4, t: 1.5, pos: [0, 0, 0] }),
+    b: board({ id: 'brd_b', l: 4, w: 3, t: 1.5, pos: [0, 0, 1.25], rot: [0, 90, 0] }),
+    params: { twin: true },
+    removedA: 2 * (0.5 * 0.75 * 1.5),
+    removedB: 1.5 * 3 * 1.5 - 2 * (0.5 * 0.75 * 1.5), // overlap block minus the two tenons
+  },
 ]
 
 describe('JointFns — removed volume (§6.1, ± 0.001 in³)', () => {
   for (const c of CASES) {
-    it(`${c.name}: carves the analytic volume from each board`, async () => {
+    it(`${c.label ?? c.name}: carves the analytic volume from each board`, async () => {
       const meshes = await carve(jointModel(c.a, c.b, c.name, c.params))
       expect(removedVolume(c.a, meshes.get('brd_a')!)).toBeCloseTo(c.removedA, 3)
       expect(removedVolume(c.b, meshes.get('brd_b')!)).toBeCloseTo(c.removedB, 3)
@@ -96,16 +161,17 @@ describe('JointFns — removed volume (§6.1, ± 0.001 in³)', () => {
 describe('JointFns — containment (§6.1: cutter ⊂ target board)', () => {
   for (const c of CASES) {
     if (c.name === 'butt') continue // butt removes nothing
-    it(`${c.name}: every cutter sits inside its target board`, () => {
+    it(`${c.label ?? c.name}: every cutter sits inside its target board`, () => {
       const fn = JOINT_FNS[c.name]!
       const pair = pairSolids(c.a, c.b)
       const set = fn(pair.a, pair.b, c.params ?? {}, { model: jointModel(c.a, c.b, c.name, c.params), tol: 1 / 64 })
       const within = (cutters: typeof set.a, b: Board) => {
         const h = [b.dims.l / 2, b.dims.w / 2, b.dims.t / 2]
         for (const cut of cutters) {
+          const bounds = cutterBounds(cut)
           for (let i = 0; i < 3; i++) {
-            expect(cut.min[i]).toBeGreaterThanOrEqual(-h[i] - 1e-6)
-            expect(cut.max[i]).toBeLessThanOrEqual(h[i] + 1e-6)
+            expect(bounds.min[i]).toBeGreaterThanOrEqual(-h[i] - 1e-6)
+            expect(bounds.max[i]).toBeLessThanOrEqual(h[i] + 1e-6)
           }
         }
       }
@@ -128,7 +194,7 @@ describe('half_lap — complement (§6.1: removed_a + removed_b = overlap)', () 
 
 describe('JointFns — idempotence & valid meshes (§6.1)', () => {
   for (const c of CASES) {
-    it(`${c.name}: twice → bit-identical, all normals unit length`, async () => {
+    it(`${c.label ?? c.name}: twice → bit-identical, all normals unit length`, async () => {
       const m = jointModel(c.a, c.b, c.name, c.params)
       const first = await carve(m)
       const second = await carve(m)
@@ -166,14 +232,95 @@ describe('mortise_tenon — warnings', () => {
     expect(c).toContain('NEAR_THROUGH')
   })
 
-  it('warns that a haunch is accepted but not carved', async () => {
-    const c = await codes(stile(), rail(), { haunch: 'square' })
-    expect(c).toContain('JOINT_FEATURE_UNIMPLEMENTED')
-  })
-
   it('a clean through tenon raises no warnings', async () => {
     const c = await codes(stile(), rail())
     expect(c).toEqual([])
+  })
+
+  // ── chunk 12 (docs/chunk12-design.md) ──────────────────────────────────────
+  it('haunch + matching groove: carved silently (the §3.4 live derivation)', async () => {
+    const c = await codes(frameStile(), frameRail(), { haunch: 'square' })
+    expect(c).toEqual([])
+  })
+
+  it('haunch on a groove-less stile warns HAUNCH_NO_GROOVE (still carved)', async () => {
+    const c = await codes(frameStile([]), frameRail(), { haunch: 'square' })
+    expect(c).toContain('HAUNCH_NO_GROOVE')
+  })
+
+  it('haunch stub that will not seat in the groove warns HAUNCH_GROOVE_MISMATCH', async () => {
+    const off = frameStile([{ ...PANEL_GROOVE, offset: 0.25 }])
+    const c = await codes(off, frameRail(), { haunch: 'square' })
+    expect(c).toContain('HAUNCH_GROOVE_MISMATCH')
+  })
+
+  it('sloped haunch cannot fill a groove run-out → HAUNCH_GROOVE_MISMATCH', async () => {
+    const c = await codes(frameStile(), frameRail(), { haunch: 'sloped' })
+    expect(c).toContain('HAUNCH_GROOVE_MISMATCH')
+  })
+
+  it('wedged on a blind mortise warns WEDGE_NEEDS_THROUGH and skips the flare', async () => {
+    const c = await codes(stile(), rail(), { wedged: true, through: false, depth: 1.0 })
+    expect(c).toContain('WEDGE_NEEDS_THROUGH')
+  })
+
+  it('drawbore pin past a shallow mortise warns DRAWBORE_NO_ROOM', async () => {
+    const c = await codes(stile(), rail(), { drawbore: true, through: false, depth: 0.6, pin_dia: 0.5 })
+    expect(c).toContain('DRAWBORE_NO_ROOM')
+  })
+
+  it('a fitting drawbore raises no warnings (markers + notes only, no carve)', async () => {
+    const c = await codes(stile(), rail(), { drawbore: true })
+    expect(c).toEqual([])
+  })
+
+  it('twin on a narrow rail warns THIN_MORTISE_WALL for the web', async () => {
+    // usable width = 1.4 − 0.75 shoulders = 0.65 → ~0.217 web after thirds (< 1/4).
+    const narrow = board({ id: 'brd_b', l: 4, w: 1.4, t: 1.5, pos: [0, 0.7, 1.25], rot: [0, 90, 0] })
+    const c = await codes(stile(), narrow, { twin: true })
+    expect(c).toContain('THIN_MORTISE_WALL')
+  })
+})
+
+// Chunk 12 placement: the derived bands land where the design doc says they do.
+describe('mortise_tenon — chunk 12 placement', () => {
+  const ctx = (a: Board, b: Board) => ({ model: jointModel(a, b, 'mortise_tenon'), tol: 1 / 64 })
+  const fn = JOINT_FNS['mortise_tenon']!
+
+  it('square haunch: socket sits in the groove channel; mortise stops at the band', () => {
+    // Stile is unrotated at the origin, so pair frame = board frame = world.
+    const a = frameStile()
+    const b = frameRail()
+    const pair = pairSolids(a, b)
+    const set = fn(pair.a, pair.b, { haunch: 'square' }, ctx(a, b))
+    const feats = set.a.map((c) => c.feature)
+    expect(feats).toEqual(['mortise', 'haunch'])
+    const mortise = cutterBounds(set.a[0])
+    expect(mortise.min[0]).toBeCloseTo(9.375, 5) // far shoulder 3/8 off R.min = 9
+    expect(mortise.max[0]).toBeCloseTo(11.34375, 5) // haunch band starts (12 − U/4)
+    const socket = cutterBounds(set.a[1])
+    expect(socket.min[0]).toBeCloseTo(11.34375, 5)
+    expect(socket.max[0]).toBeCloseTo(12, 5) // runs to the stile's end
+    expect(socket.min[1]).toBeCloseTo(1.25 - 0.375, 5) // groove depth into the edge
+    expect(socket.max[1]).toBeCloseTo(1.25, 5)
+    expect(socket.min[2]).toBeCloseTo(-0.125, 5) // = the groove's 1/4 slot band
+    expect(socket.max[2]).toBeCloseTo(0.125, 5)
+  })
+
+  it('wedged: kerfs stop 1/2 short of the shoulder, inside each tenon', () => {
+    const a = board({ id: 'brd_a', l: 4, w: 4, t: 1.5, pos: [0, 0, 0] })
+    const b = board({ id: 'brd_b', l: 4, w: 3, t: 1.5, pos: [0, 0, 1.25], rot: [0, 90, 0] })
+    const pair = pairSolids(a, b)
+    const set = fn(pair.a, pair.b, { wedged: true }, ctx(a, b))
+    const kerfs = set.b.filter((c) => c.feature === 'kerf').map(cutterBounds)
+    expect(kerfs).toHaveLength(2)
+    for (const k of kerfs) {
+      // b is rotated y-90: insertion lands on b-local x — shoulder line at local 0.5,
+      // tenon end at local +2 (b's end face).
+      expect(k.min[0]).toBeCloseTo(1.0, 5) // stops 1/2 short of the shoulder line
+      expect(k.max[0]).toBeCloseTo(2.0, 5) // runs out the tenon end
+      expect(k.max[1] - k.min[1]).toBeCloseTo(1 / 16, 5) // saw kerf, spread axis
+    }
   })
 })
 
@@ -195,10 +342,11 @@ describe('JointFns — cut placement', () => {
     const pair = pairSolids(c.a, c.b)
     const set = fn(pair.a, pair.b, {}, ctx(c.a, c.b, 'housing'))
     expect(set.a).toHaveLength(1)
+    const dado = cutterBounds(set.a[0])
     // Cutter max Z = +t_a/2 = 0.375 (flush with a's top face — overcut opens it at carve time).
-    expect(set.a[0].max[2]).toBeCloseTo(0.375, 5)
+    expect(dado.max[2]).toBeCloseTo(0.375, 5)
     // Cutter depth = t_a/3 = 0.25, so min Z = 0.375 − 0.25 = 0.125 (interior wall, stays exact).
-    expect(set.a[0].min[2]).toBeCloseTo(0.125, 5)
+    expect(dado.min[2]).toBeCloseTo(0.125, 5)
   })
 
   it('rabbet: L-notch is on the right face AND edge of a', () => {
@@ -209,10 +357,11 @@ describe('JointFns — cut placement', () => {
     const pair = pairSolids(c.a, c.b)
     const set = fn(pair.a, pair.b, {}, ctx(c.a, c.b, 'rabbet'))
     expect(set.a).toHaveLength(1)
-    expect(set.a[0].max[2]).toBeCloseTo(0.375, 5)  // +Z face (depth axis)
-    expect(set.a[0].min[2]).toBeCloseTo(0, 5)       // depth = t_a/2, so 0.375−0.375=0
-    expect(set.a[0].max[1]).toBeCloseTo(3, 5)       // +Y edge (w_a/2=3, where b sits)
-    expect(set.a[0].min[1]).toBeCloseTo(2.5, 5)     // width = t_b=0.5, so 3−0.5=2.5
+    const notch = cutterBounds(set.a[0])
+    expect(notch.max[2]).toBeCloseTo(0.375, 5)  // +Z face (depth axis)
+    expect(notch.min[2]).toBeCloseTo(0, 5)       // depth = t_a/2, so 0.375−0.375=0
+    expect(notch.max[1]).toBeCloseTo(3, 5)       // +Y edge (w_a/2=3, where b sits)
+    expect(notch.min[1]).toBeCloseTo(2.5, 5)     // width = t_b=0.5, so 3−0.5=2.5
   })
 
   it('half_lap: a loses the bottom Z half, b loses the top Z half (split=0.5)', () => {
@@ -224,11 +373,11 @@ describe('JointFns — cut placement', () => {
     const pair = pairSolids(c.a, c.b)
     const set = fn(pair.a, pair.b, {}, ctx(c.a, c.b, 'half_lap'))
     // a (no rotation): cutter is bottom half in local Z.
-    expect(set.a[0].min[2]).toBeCloseTo(-0.375, 5)
-    expect(set.a[0].max[2]).toBeCloseTo(0, 5)
+    expect(cutterBounds(set.a[0]).min[2]).toBeCloseTo(-0.375, 5)
+    expect(cutterBounds(set.a[0]).max[2]).toBeCloseTo(0, 5)
     // b (rotated 90° around Z): in b's local frame the cutter is the top half in local Z.
-    expect(set.b[0].min[2]).toBeCloseTo(0, 5)
-    expect(set.b[0].max[2]).toBeCloseTo(0.375, 5)
+    expect(cutterBounds(set.b[0]).min[2]).toBeCloseTo(0, 5)
+    expect(cutterBounds(set.b[0]).max[2]).toBeCloseTo(0.375, 5)
   })
 
   it('bridle: slot is centred in thickness and reaches a\'s end face', () => {
@@ -239,12 +388,13 @@ describe('JointFns — cut placement', () => {
     const pair = pairSolids(c.a, c.b)
     const set = fn(pair.a, pair.b, {}, ctx(c.a, c.b, 'bridle'))
     expect(set.a).toHaveLength(1)
+    const slot = cutterBounds(set.a[0])
     // Slot reaches a's +X end face (halfL = 3).
-    expect(set.a[0].max[0]).toBeCloseTo(3, 5)
+    expect(slot.max[0]).toBeCloseTo(3, 5)
     // Slot is centred in Z: midpoint ≈ 0.
-    expect((set.a[0].min[2] + set.a[0].max[2]) / 2).toBeCloseTo(0, 5)
+    expect((slot.min[2] + slot.max[2]) / 2).toBeCloseTo(0, 5)
     // Tenon thickness = 0.375 → slot extent in Z = 0.375.
-    expect(set.a[0].max[2] - set.a[0].min[2]).toBeCloseTo(0.375, 5)
+    expect(slot.max[2] - slot.min[2]).toBeCloseTo(0.375, 5)
   })
 
   it('mortise_tenon: mortise is centred in a\'s thickness and runs full depth (through)', () => {
@@ -255,12 +405,13 @@ describe('JointFns — cut placement', () => {
     const pair = pairSolids(c.a, c.b)
     const set = fn(pair.a, pair.b, {}, ctx(c.a, c.b, 'mortise_tenon'))
     expect(set.a).toHaveLength(1)
+    const mortise = cutterBounds(set.a[0])
     // Centred in a's thickness axis (X): ±tenonThk/2 = ±0.25.
-    expect(set.a[0].min[0]).toBeCloseTo(-0.25, 5)
-    expect(set.a[0].max[0]).toBeCloseTo(0.25, 5)
+    expect(mortise.min[0]).toBeCloseTo(-0.25, 5)
+    expect(mortise.max[0]).toBeCloseTo(0.25, 5)
     // Through mortise: full Z extent of a = ±t_a/2 = ±0.75.
-    expect(set.a[0].min[2]).toBeCloseTo(-0.75, 5)
-    expect(set.a[0].max[2]).toBeCloseTo(0.75, 5)
+    expect(mortise.min[2]).toBeCloseTo(-0.75, 5)
+    expect(mortise.max[2]).toBeCloseTo(0.75, 5)
   })
 })
 

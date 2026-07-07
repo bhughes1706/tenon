@@ -26,6 +26,7 @@ export type CutFeatureKind =
   | 'slot'
   | 'cheek'
   | 'haunch'
+  | 'kerf'
 
 export interface CutFeature {
   id: number // matches the per-triangle provenance index
@@ -42,10 +43,67 @@ export interface CutterBox {
   jointId?: string
 }
 
+// A tapered cutter (docs/chunk12-design.md §1): a linear sweep along `axis` between two
+// axis-aligned rectangles — the wedged mortise's exit flare and the sloped haunch, the two
+// §5.6 cuts that are not boxes. Convex, 8 vertices, exact. Rect coords are the OTHER two
+// axes in ascending axis order (axis 1 → rect axes [0, 2]). Expressed, like CutterBox, in
+// the target board's LOCAL frame.
+export interface CutterFrustum {
+  frustum: true // discriminant: `'frustum' in cutter`
+  axis: 0 | 1 | 2
+  span: [number, number] // stations along `axis` (lo ≤ hi)
+  rectLo: { min: [number, number]; max: [number, number] } // cross-section at span[0]
+  rectHi: { min: [number, number]; max: [number, number] } // cross-section at span[1]
+  feature: CutFeatureKind
+  jointId?: string
+}
+
+export type Cutter = CutterBox | CutterFrustum
+
+export const isFrustum = (c: Cutter): c is CutterFrustum => 'frustum' in c
+
+// Rect axes for a frustum's sweep axis: the other two axes in ascending order.
+export const frustumRectAxes = (axis: 0 | 1 | 2): [number, number] =>
+  axis === 0 ? [1, 2] : axis === 1 ? [0, 2] : [0, 1]
+
+// The 8 corners of a frustum cutter (4 per station, lo-station group first).
+export function frustumCorners(f: CutterFrustum): Vec3[] {
+  const [u, v] = frustumRectAxes(f.axis)
+  const out: Vec3[] = []
+  for (const [s, r] of [[f.span[0], f.rectLo], [f.span[1], f.rectHi]] as const) {
+    for (const cu of [r.min[0], r.max[0]]) {
+      for (const cv of [r.min[1], r.max[1]]) {
+        const p: Vec3 = [0, 0, 0]
+        p[f.axis] = s
+        p[u] = cu
+        p[v] = cv
+        out.push(p)
+      }
+    }
+  }
+  return out
+}
+
+// Conservative local-frame bounds of any cutter (frustum bounds = station span × the
+// union of its two rects) — containment tests and broad checks.
+export function cutterBounds(c: Cutter): AABB {
+  if (!isFrustum(c)) return { min: c.min, max: c.max }
+  const [u, v] = frustumRectAxes(c.axis)
+  const min: Vec3 = [0, 0, 0]
+  const max: Vec3 = [0, 0, 0]
+  min[c.axis] = c.span[0]
+  max[c.axis] = c.span[1]
+  min[u] = Math.min(c.rectLo.min[0], c.rectHi.min[0])
+  max[u] = Math.max(c.rectLo.max[0], c.rectHi.max[0])
+  min[v] = Math.min(c.rectLo.min[1], c.rectHi.min[1])
+  max[v] = Math.max(c.rectLo.max[1], c.rectHi.max[1])
+  return { min, max }
+}
+
 // JointFn output: cutters for each participant + any joinery warnings.
 export interface CutterSet {
-  a: CutterBox[] // subtracted from board a (a's local frame)
-  b: CutterBox[] // subtracted from board b (b's local frame)
+  a: Cutter[] // subtracted from board a (a's local frame)
+  b: Cutter[] // subtracted from board b (b's local frame)
   warnings: Warning[]
 }
 

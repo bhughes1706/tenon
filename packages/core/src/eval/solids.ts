@@ -16,7 +16,8 @@
 import type { Manifold, ManifoldToplevel } from 'manifold-3d'
 import type { Board } from '../board.js'
 import type { Vec3 } from '../geometry/aabb.js'
-import type { CutterBox } from './types.js'
+import type { CutterBox, CutterFrustum } from './types.js'
+import { frustumCorners, frustumRectAxes } from './types.js'
 
 type ManifoldStatic = ManifoldToplevel['Manifold']
 
@@ -62,6 +63,44 @@ export function buildCutter(M: ManifoldStatic, box: CutterBox): { manifold: Mani
   const manifold = cube.translate(cx, cy, cz)
   cube.delete()
   return { manifold, originalId }
+}
+
+// Overcut (gotcha #4) for a frustum, mirroring overcutToBoard. Two rules cover every
+// frustum this codebase emits (docs/chunk12-design.md §1): a STATION plane flush with a
+// board face is pushed out (rect kept — an extrusion of the end cross-section), and a rect
+// bound flush at BOTH stations is pushed out on both. A rect bound flush at only one
+// station (a sloped face grazing the surface) does not occur and would stay exact.
+export function overcutFrustumToBoard(f: CutterFrustum, board: Board): CutterFrustum {
+  const h: Vec3 = [board.dims.l / 2, board.dims.w / 2, board.dims.t / 2]
+  const [u, v] = frustumRectAxes(f.axis)
+  const span: [number, number] = [...f.span]
+  const lo = { min: [...f.rectLo.min] as [number, number], max: [...f.rectLo.max] as [number, number] }
+  const hi = { min: [...f.rectHi.min] as [number, number], max: [...f.rectHi.max] as [number, number] }
+  if (span[0] <= -h[f.axis] + FLUSH_EPS) span[0] = -h[f.axis] - OVERCUT
+  if (span[1] >= h[f.axis] - FLUSH_EPS) span[1] = h[f.axis] + OVERCUT
+  for (const [i, axis] of [[0, u], [1, v]] as const) {
+    if (lo.min[i] <= -h[axis] + FLUSH_EPS && hi.min[i] <= -h[axis] + FLUSH_EPS) {
+      lo.min[i] = -h[axis] - OVERCUT
+      hi.min[i] = -h[axis] - OVERCUT
+    }
+    if (lo.max[i] >= h[axis] - FLUSH_EPS && hi.max[i] >= h[axis] - FLUSH_EPS) {
+      lo.max[i] = h[axis] + OVERCUT
+      hi.max[i] = h[axis] + OVERCUT
+    }
+  }
+  return { ...f, span, rectLo: lo, rectHi: hi }
+}
+
+// Frustum → Manifold via the convex hull of its 8 corners; asOriginal() mints the
+// originalID face provenance needs (hulled solids are not "original" by construction).
+export function buildFrustumCutter(
+  M: ManifoldStatic,
+  f: CutterFrustum,
+): { manifold: Manifold; originalId: number } {
+  const hulled = M.hull(frustumCorners(f))
+  const manifold = hulled.asOriginal()
+  hulled.delete()
+  return { manifold, originalId: manifold.originalID() }
 }
 
 // Board edge grooves → local-frame cutter boxes (§3.4). Carved in baseSolid BEFORE any

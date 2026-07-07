@@ -3,9 +3,10 @@ import type { JointType } from '@tenon/core'
 
 // Shared per-type joint param form (chunk 11) — rendered by BOTH the JointDialog
 // (params accumulate in local state until Add) and the JointInspector (each commit
-// dispatches update_joint). Only params the chunk-9 JointFns actually consume are
-// shown; deferred ones (M&T haunch/wedged/drawbore/twin, housing shoulder) would
-// only warn JOINT_FEATURE_UNIMPLEMENTED, so they're omitted until they carve.
+// dispatches update_joint). Only params the JointFns actually consume are shown;
+// deferred ones (housing shoulder) would only warn JOINT_FEATURE_UNIMPLEMENTED, so
+// they're omitted until they carve. Chunk 12 carved the full M&T set (haunch/wedged/
+// drawbore/twin — docs/chunk12-design.md), so those are live below.
 //
 // Optional numeric params show their geometry-derived default as a placeholder.
 // Known v1 limitation: once set, a param can't return to "auto" — update_joint
@@ -229,6 +230,47 @@ export function JointParamsForm({ type, params, precision, onPatch }: {
                 set('width_shoulders')([cur[0], v])
               }}
             />
+          </Row>
+          <Row label="Haunch" title="Stub that fills the panel-groove run-out at the stile's end (square) or hides as an anti-twist ramp (sloped)">
+            <select value={str(params, 'haunch') ?? 'none'} onChange={(e) => set('haunch')(e.target.value)} style={selectStyle}>
+              <option value="none">none</option>
+              <option value="square">square</option>
+              <option value="sloped">sloped</option>
+            </select>
+          </Row>
+          {(str(params, 'haunch') ?? 'none') !== 'none' && (
+            <>
+              <Row label="Haunch depth" title="Auto: the governing edge groove's depth on a (§3.4)">
+                <OptInch value={num(params, 'haunch_depth')} placeholder="auto: groove" precision={precision} onSet={set('haunch_depth')} />
+              </Row>
+              <Row label="Haunch len" title="Band width along b. Auto: a third of the tenon width">
+                <OptInch value={num(params, 'haunch_len')} placeholder="auto: ⅓ tenon" precision={precision} onSet={set('haunch_len')} />
+              </Row>
+            </>
+          )}
+          <Row label="Wedged" title="Through only: mortise exit flares 1/8 per side; kerfs sawn for wedges">
+            <Check checked={bool(params, 'wedged', false)} onSet={set('wedged')} />
+          </Row>
+          {bool(params, 'wedged', false) && (
+            <Row label="Kerfs" title="Wedge kerfs per tenon, stopping 1/2 short of the shoulder">
+              <NumInput value={num(params, 'wedge_kerfs') ?? 2} min={1} max={4} step={1} onSet={(v) => set('wedge_kerfs')(Math.round(v))} />
+            </Row>
+          )}
+          <Row label="Drawbore" title="Offset-drilled pin pulls the shoulder tight — ghost pin + drilling notes, no carve">
+            <Check checked={bool(params, 'drawbore', false)} onSet={set('drawbore')} />
+          </Row>
+          {bool(params, 'drawbore', false) && (
+            <>
+              <Row label="Pin dia">
+                <OptInch value={num(params, 'pin_dia')} placeholder={'3/8"'} precision={precision} onSet={set('pin_dia')} />
+              </Row>
+              <Row label="Pin offset" title="How far the tenon hole is offset toward the shoulder">
+                <OptInch value={num(params, 'drawbore_offset')} placeholder={'1/16"'} precision={precision} onSet={set('drawbore_offset')} />
+              </Row>
+            </>
+          )}
+          <Row label="Twin" title="Two tenons across b's width (wide rails) — usable width split in thirds">
+            <Check checked={bool(params, 'twin', false)} onSet={set('twin')} />
           </Row>
         </>
       )

@@ -14,8 +14,16 @@ import type { Model } from '../model.js'
 import type { Warning } from '../common.js'
 import { WarningCode } from '../common.js'
 import { checkJointPrecondition, CONTACT_TOL } from '../geometry/preconditions.js'
-import type { CutFeature, CutterBox, EvalCache, EvalCtx, EvalMesh, EvalResult } from './types.js'
-import { baseSolid, buildCutter, edgeGrooveCutters, overcutToBoard } from './solids.js'
+import type { CutFeature, Cutter, EvalCache, EvalCtx, EvalMesh, EvalResult } from './types.js'
+import { isFrustum } from './types.js'
+import {
+  baseSolid,
+  buildCutter,
+  buildFrustumCutter,
+  edgeGrooveCutters,
+  overcutFrustumToBoard,
+  overcutToBoard,
+} from './solids.js'
 import { toEvalMesh } from './mesh.js'
 import { JOINT_FNS } from './joints/index.js'
 import { pairSolids } from './joints/util.js'
@@ -34,8 +42,12 @@ export function createEvalCache(): EvalCache {
 // complete dependency set — the board's own world transform is applied by R3F, never
 // baked into the local mesh. Cutters are normalized to positional tuples so the key
 // does not depend on object-property order.
-function carveKey(board: Board, cutters: CutterBox[]): string {
-  const c = cutters.map((x) => [x.min, x.max, x.feature, x.jointId ?? null])
+function carveKey(board: Board, cutters: Cutter[]): string {
+  const c = cutters.map((x) =>
+    isFrustum(x)
+      ? ['F', x.axis, x.span, x.rectLo.min, x.rectLo.max, x.rectHi.min, x.rectHi.max, x.feature, x.jointId ?? null]
+      : [x.min, x.max, x.feature, x.jointId ?? null],
+  )
   return JSON.stringify([board.dims.l, board.dims.w, board.dims.t, c])
 }
 
@@ -47,7 +59,7 @@ export async function evaluate(model: Model, cache?: EvalCache): Promise<EvalRes
 
   // 1. Seed every board's cutter list with its edge grooves (board features, §3.4),
   //    then add the joint cutters from each enabled joint's JointFn.
-  const cuttersByBoard = new Map<string, CutterBox[]>()
+  const cuttersByBoard = new Map<string, Cutter[]>()
   for (const board of model.boards) cuttersByBoard.set(board.id, edgeGrooveCutters(board))
 
   const ctx: EvalCtx = { model, tol: CONTACT_TOL }
@@ -124,7 +136,7 @@ export async function evaluate(model: Model, cache?: EvalCache): Promise<EvalRes
 }
 
 // Tag a joint's cutters with the joint id and append them to the target board's list.
-function stamp(into: CutterBox[] | undefined, cutters: CutterBox[], jointId: string): void {
+function stamp(into: Cutter[] | undefined, cutters: Cutter[], jointId: string): void {
   if (!into) return
   for (const c of cutters) into.push({ ...c, jointId })
 }
@@ -132,7 +144,7 @@ function stamp(into: CutterBox[] | undefined, cutters: CutterBox[], jointId: str
 // Carve one board in its local frame from its cutter boxes. Owns all WASM lifetimes
 // via `trash`. Feature 0 is always the base; each cutter appends a CutFeature, and the
 // run table maps output triangles back to the originating feature (provenance, §2e).
-function evaluateBoard(M: ManifoldStatic, board: Board, cutterBoxes: CutterBox[]): EvalMesh {
+function evaluateBoard(M: ManifoldStatic, board: Board, cutterBoxes: Cutter[]): EvalMesh {
   const trash: Manifold[] = []
   try {
     const base = baseSolid(M, board)
@@ -147,7 +159,9 @@ function evaluateBoard(M: ManifoldStatic, board: Board, cutterBoxes: CutterBox[]
       const featureId = features.length
       features.push({ id: featureId, kind: box.feature, jointId: box.jointId })
       // Open flush faces (gotcha #4) just before the carve; interior walls stay exact.
-      const { manifold, originalId } = buildCutter(M, overcutToBoard(box, board))
+      const { manifold, originalId } = isFrustum(box)
+        ? buildFrustumCutter(M, overcutFrustumToBoard(box, board))
+        : buildCutter(M, overcutToBoard(box, board))
       idToFeature.set(originalId, featureId)
       trash.push(manifold)
       cutters.push(manifold)
