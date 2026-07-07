@@ -1,9 +1,10 @@
 # Tenon — Agent Handoff Document
 
-**Date:** 2026-07-07 (chunk 14 COMPLETE — model thumbnails. §15 governs chunk numbering,
-not this file's section order — see the completion log below for what "chunk N" maps to.
-**Next unbuilt feature: chunk 16, box joint + dovetail** (`docs/chunk16-design.md` has the
-full derivation, ready to implement). Chunk 17 = bid engine.)  
+**Date:** 2026-07-07 (chunk 15 COMPLETE — cut list glue-up + panel auto-sizing. §15 governs
+chunk numbering, not this file's section order — see the completion log below for what
+"chunk N" maps to. **Next unbuilt feature: chunk 16, box joint + dovetail**
+(`docs/chunk16-design.md` has the full derivation, ready to implement). Chunk 17 = bid
+engine.)  
 **Repo:** https://github.com/bhughes1706/tenon  
 **Spec:** `docs/tenon-spec-v0.4.md` (always load this — it is the ground truth)
 
@@ -17,6 +18,30 @@ full derivation, ready to implement). Chunk 17 = bid engine.)
 
 ## Completion log (one paragraph per chunk — see docs/chunkN-design.md for full detail)
 
+- **✅ Chunk 15 (2026-07-07) — glue-up strip math + panel auto-sizing.** Printable/CSV
+  export (`web/src/lib/cutlist.ts` `cutlistToHtml`/`cutlistToCsv`/`printCutlist`) already
+  shipped in chunk 10 — this chunk was the two pieces chunk 10 explicitly deferred.
+  **Design call (no data-model link exists from a panel to the frame around it):** a new
+  `Board.panel_fit: { groove_depth } | null` (board.ts) means "this panel's own
+  `dims.l`/`dims.w` are the OPENING size, not the milled blank size" — a convention on the
+  panel board itself, not a geometric search. `cutlist/panel.ts` `fitPanel()` derives the
+  actual blank: opening + 2×groove_depth, minus a movement gap
+  (`crossGrainDim × species.shrink_tan_pct% × 0.6`, §3.4) applied **only to the axis
+  perpendicular to `grain`** — movement along the grain is negligible, that axis just gets
+  the groove-depth extension. Unknown species/no `shrink_tan_pct` → movement gap is 0, not
+  an error. `cutlist.ts` applies `fitPanel()` before rough allowances, then `glue_up`
+  strip expansion on top (§3.1: qty × `glue_up.strips`, width `fittedW/strips` + a 1/8"
+  per-strip glue-line allowance ahead of the usual +1/4" width allowance); a `panel` over
+  `DEFAULT_MAX_STRIP_WIDTH` (5.5", exported from board.ts, shared with `GlueUpSchema`'s own
+  default) with no `glue_up` set gets `WIDE_PANEL_NO_GLUEUP` instead. Both the fit math and
+  the strip math emit their derivation as a cut-list note (not just a bare warning) —
+  that's the literal §3.4 instruction ("the movement lint becomes sizing math rather than
+  just a warning"). `CutlistSpecies` gained an optional `shrink_tan_pct`, threaded through
+  from the species table on both the server (`modelService.loadCutlistOpts`) and the web
+  client (`speciesApi.ts` → `buildCutlistOpts`). **Scoped out:** `PANEL_MOVEMENT` /
+  `MOVEMENT_MISMATCH` (defined in `common.ts` since chunk 2) are still unused — §3.4 says
+  the sizing math *supersedes* PANEL_MOVEMENT for a fitted panel, and MOVEMENT_MISMATCH
+  needs multi-species-per-panel (face-glued lamination) modeling that doesn't exist yet.
 - **✅ Chunk 14 (2026-07-07) — model thumbnails.** §15 row 14's second half (`render_view`
   itself shipped early, in chunk 11). `lib/thumbnail.ts`: `scheduleThumbnail(modelId)`
   debounces 1.5s per model, then renders an iso PNG via the existing `renderModelView`

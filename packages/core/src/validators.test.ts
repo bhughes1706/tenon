@@ -99,6 +99,18 @@ describe('BoardSchema', () => {
     expect(board.edge_grooves[0].stopped).toBe(false) // default
   })
 
+  it('accepts panel_fit and defaults it to null', () => {
+    const board = BoardSchema.parse(BOARD_A)
+    expect(board.panel_fit).toBeNull()
+
+    const floating = BoardSchema.parse({ ...BOARD_A, kind: 'panel', panel_fit: { groove_depth: 0.375 } })
+    expect(floating.panel_fit).toEqual({ groove_depth: 0.375 })
+  })
+
+  it('rejects panel_fit with a non-positive groove_depth', () => {
+    expect(BoardSchema.safeParse({ ...BOARD_A, panel_fit: { groove_depth: 0 } }).success).toBe(false)
+  })
+
   it('rejects missing dims', () => {
     expect(BoardSchema.safeParse({ ...BOARD_A, dims: undefined }).success).toBe(false)
   })

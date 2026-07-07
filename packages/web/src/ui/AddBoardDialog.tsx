@@ -47,6 +47,7 @@ export function AddBoardDialog({
       locked: false,
       glue_up: null,
       edge_grooves: [],
+      panel_fit: null,
     }
     void useModelStore.getState().addBoard(board)
     useModelStore.getState().requestView('iso')

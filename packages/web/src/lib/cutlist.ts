@@ -10,7 +10,12 @@ import type { Settings } from './api.js'
 export function buildCutlistOpts(species: Species[], settings: Settings | null): CutlistOpts {
   const map: Record<string, CutlistSpecies> = {}
   for (const s of species) {
-    map[s.id] = { kind: s.kind === 'sheet' ? 'sheet' : 'solid', cost_bf: s.cost_bf, common_name: s.common_name }
+    map[s.id] = {
+      kind: s.kind === 'sheet' ? 'sheet' : 'solid',
+      cost_bf: s.cost_bf,
+      common_name: s.common_name,
+      shrink_tan_pct: s.shrink_tan_pct ?? undefined,
+    }
   }
   return {
     species: map,

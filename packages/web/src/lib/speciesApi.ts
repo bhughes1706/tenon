@@ -7,6 +7,7 @@ export interface Species {
   kind: 'solid' | 'sheet'
   cost_bf: number
   thicknesses: string[]
+  shrink_tan_pct: number | null
 }
 
 let cache: Species[] | null = null

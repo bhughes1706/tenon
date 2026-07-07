@@ -189,14 +189,20 @@ export function loadCutlistOpts(): CutlistOpts {
   const db = getDb()
 
   const species: Record<string, CutlistSpecies> = {}
-  const rows = db.prepare('SELECT id, common_name, kind, cost_bf FROM species').all() as Array<{
+  const rows = db.prepare('SELECT id, common_name, kind, cost_bf, shrink_tan_pct FROM species').all() as Array<{
     id: string
     common_name: string
     kind: string
     cost_bf: number
+    shrink_tan_pct: number | null
   }>
   for (const r of rows) {
-    species[r.id] = { kind: r.kind === 'sheet' ? 'sheet' : 'solid', cost_bf: r.cost_bf, common_name: r.common_name }
+    species[r.id] = {
+      kind: r.kind === 'sheet' ? 'sheet' : 'solid',
+      cost_bf: r.cost_bf,
+      common_name: r.common_name,
+      shrink_tan_pct: r.shrink_tan_pct ?? undefined,
+    }
   }
 
   const settings = db.prepare('SELECT key, value FROM settings').all() as { key: string; value: string }[]

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(~/.nvm/versions/node/v20.20.2/bin/corepack pnpm --filter * typecheck *)",
+      "Bash(/Users/Brian/.nvm/versions/node/v20.20.2/bin/corepack pnpm --filter * typecheck *)",
+      "Bash(/Users/Brian/.nvm/versions/node/v20.20.2/bin/corepack pnpm typecheck *)",
+      "Bash(corepack pnpm typecheck *)",
+      "Bash(corepack pnpm --filter * typecheck *)"
+    ]
+  }
+}

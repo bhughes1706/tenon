@@ -20,14 +20,35 @@ export const EdgeGrooveSchema = z
   .strict()
 export type EdgeGroove = z.infer<typeof EdgeGrooveSchema>
 
+// §3.1 note: "glue_up.max_strip_width defaults to 5.5"" — also the cut list's threshold
+// for WIDE_PANEL_NO_GLUEUP (a panel wider than this with no glue_up set), so it's exported
+// rather than inlined twice.
+export const DEFAULT_MAX_STRIP_WIDTH = 5.5
+
 // §3.1 — set when kind === 'panel' and the top must be glued up from strips
 export const GlueUpSchema = z
   .object({
-    max_strip_width: z.number().positive().default(5.5),
+    max_strip_width: z.number().positive().default(DEFAULT_MAX_STRIP_WIDTH),
     strips: z.number().int().min(2),
   })
   .strict()
 export type GlueUp = z.infer<typeof GlueUpSchema>
+
+// §3.4 — set on a `panel` board that floats in a surrounding frame's edge grooves.
+// When set, this board's `dims.l`/`dims.w` are read as the OPENING size (the reveal the
+// panel must fill once installed) rather than the panel's own milled blank size — there is
+// no board/joint field anywhere that links a panel to the frame members around it, so the
+// opening is a modeling convention on the panel board itself, not something derived by
+// searching the model spatially. The cut list (§7, chunk 15) computes the actual blank to
+// cut: opening + 2 × groove_depth − movement gap. No default for `groove_depth` — mirrors
+// EdgeGrooveSchema.depth above: it must match whatever cutter actually grooved the frame,
+// which isn't knowable from the panel board alone.
+export const PanelFitSchema = z
+  .object({
+    groove_depth: z.number().positive(),
+  })
+  .strict()
+export type PanelFit = z.infer<typeof PanelFitSchema>
 
 // All dims in decimal inches (§2.1); these are finished dimensions (§3.1)
 export const BoardDimsSchema = z
@@ -63,6 +84,7 @@ export const BoardSchema = z
     locked: z.boolean().default(false),
     glue_up: GlueUpSchema.nullable().default(null),
     edge_grooves: z.array(EdgeGrooveSchema).default([]),
+    panel_fit: PanelFitSchema.nullable().default(null),
   })
   .strict()
 export type Board = z.infer<typeof BoardSchema>

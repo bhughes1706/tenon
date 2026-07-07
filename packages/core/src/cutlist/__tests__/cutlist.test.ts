@@ -15,6 +15,7 @@ const board = (over: Partial<Board> & { id: string }): Board =>
     locked: false,
     glue_up: null,
     edge_grooves: [],
+    panel_fit: null,
     ...over,
   }) as Board
 
@@ -130,5 +131,84 @@ describe('generateCutlist', () => {
     const r = generateCutlist(model([stile, rail], [joint('mortise_tenon', 'brd_a', 'brd_b')]), OPTS)
     const railRow = r.rows.find((row) => row.boardIds.includes('brd_b'))!
     expect(railRow.notes).toEqual(['tenon 1/4 × 2-1/4 × 1-1/2'])
+  })
+})
+
+describe('glue_up strip math (§3.1)', () => {
+  it('splits a glued-up panel into N strips with a per-strip glue-line allowance', () => {
+    const panel = board({
+      id: 'brd_top',
+      kind: 'panel',
+      dims: { l: 30, w: 15, t: 0.75 },
+      glue_up: { max_strip_width: 5.5, strips: 3 },
+    })
+    const r = generateCutlist(model([panel]), OPTS)
+    expect(r.rows).toHaveLength(1)
+    const row = r.rows[0]
+    // 3 strips of 15/3 = 5" wide each
+    expect(row.qty).toBe(3)
+    expect(row.finished).toEqual({ l: 30, w: 5, t: 0.75 })
+    // rough width: 5 + 1/8 (glue line) + 1/4 (standard) = 5.375
+    expect(row.rough).toEqual({ l: 31, w: 5.375, t: 1.0 })
+    expect(row.notes).toContain('glue-up: 3 strips × 5 wide, alternate grain orientation')
+  })
+
+  it('flags a wide panel with no glue_up as WIDE_PANEL_NO_GLUEUP', () => {
+    const panel = board({ id: 'brd_wide', kind: 'panel', dims: { l: 20, w: 6, t: 0.75 } })
+    const r = generateCutlist(model([panel]), OPTS)
+    const w = r.warnings.find((x) => x.code === 'WIDE_PANEL_NO_GLUEUP')
+    expect(w).toBeDefined()
+    expect(w?.boards).toEqual(['brd_wide'])
+  })
+
+  it('does not flag a panel at or under the default 5.5" max_strip_width', () => {
+    const panel = board({ id: 'brd_ok', kind: 'panel', dims: { l: 20, w: 5.5, t: 0.75 } })
+    const r = generateCutlist(model([panel]), OPTS)
+    expect(r.warnings.some((x) => x.code === 'WIDE_PANEL_NO_GLUEUP')).toBe(false)
+  })
+})
+
+describe('panel auto-sizing (§3.4)', () => {
+  const PANEL_OPTS: CutlistOpts = {
+    ...OPTS,
+    species: { ...OPTS.species, spc_test_panel: { kind: 'solid', cost_bf: 5, common_name: 'Test Panel Species', shrink_tan_pct: 10 } },
+  }
+
+  it('sizes the blank from opening + 2×groove_depth − movement gap, cross-grain axis only', () => {
+    const panel = board({
+      id: 'brd_panel',
+      kind: 'panel',
+      species: 'spc_test_panel',
+      dims: { l: 24, w: 10, t: 0.75 }, // opening: 24 long (∥ grain), 10 wide (⊥ grain)
+      grain: 'x',
+      panel_fit: { groove_depth: 0.375 },
+    })
+    const r = generateCutlist(model([panel]), PANEL_OPTS)
+    const row = r.rows[0]
+    // l (along grain): 24 + 2×0.375 = 24.75, no movement gap
+    // w (cross grain): 10 + 2×0.375 − (10 × 0.10 × 0.6 = 0.6) = 10.15
+    expect(row.finished.l).toBeCloseTo(24.75, 10)
+    expect(row.finished.w).toBeCloseTo(10.15, 10)
+    expect(row.finished.t).toBe(0.75)
+    expect(row.notes.some((n) => n.startsWith('float panel: opening 24 × 10'))).toBe(true)
+  })
+
+  it('a panel without panel_fit is treated as a single solid board (dims pass through)', () => {
+    const panel = board({ id: 'brd_flat', kind: 'panel', dims: { l: 20, w: 5, t: 0.75 } })
+    const r = generateCutlist(model([panel]), OPTS)
+    expect(r.rows[0].finished).toEqual({ l: 20, w: 5, t: 0.75 })
+    expect(r.rows[0].notes).toEqual([])
+  })
+
+  it('falls back to zero movement gap when the species has no shrink_tan_pct', () => {
+    const panel = board({
+      id: 'brd_unknown_shrink',
+      kind: 'panel',
+      dims: { l: 24, w: 10, t: 0.75 },
+      panel_fit: { groove_depth: 0.375 },
+    })
+    // OPTS' spc_red_oak has no shrink_tan_pct set
+    const r = generateCutlist(model([panel]), OPTS)
+    expect(r.rows[0].finished.w).toBeCloseTo(10.75, 10) // 10 + 2×0.375, no subtraction
   })
 })

@@ -16,6 +16,7 @@ function board(id: string, over: Partial<Board> = {}): Board {
     locked: false,
     glue_up: null,
     edge_grooves: [],
+    panel_fit: null,
     ...over,
   }
 }

@@ -10,7 +10,7 @@ export const BoardInputSchema = BoardSchema.extend({ id: idSchema('brd_').option
 export type BoardInput = z.infer<typeof BoardInputSchema>
 
 // Every board field is patchable except id. This is also the only channel for
-// editing edge_grooves and glue_up — there are no dedicated ops for them (§4.1).
+// editing edge_grooves, glue_up, and panel_fit — there are no dedicated ops for them (§4.1).
 export const BoardPatchSchema = BoardSchema.omit({ id: true }).partial()
 export type BoardPatch = z.infer<typeof BoardPatchSchema>
 

@@ -5,14 +5,14 @@ import type { Species } from './speciesApi.js'
 import type { Settings } from './api.js'
 
 const SPECIES: Species[] = [
-  { id: 'spc_red_oak', common_name: 'Red Oak', botanical: 'Quercus rubra', kind: 'solid', cost_bf: 5.5, thicknesses: ['4/4'] },
-  { id: 'spc_bb_ply_34', common_name: 'Baltic Birch Ply 3/4"', botanical: null, kind: 'sheet', cost_bf: 70, thicknesses: ['3/4'] },
+  { id: 'spc_red_oak', common_name: 'Red Oak', botanical: 'Quercus rubra', kind: 'solid', cost_bf: 5.5, thicknesses: ['4/4'], shrink_tan_pct: 8.6 },
+  { id: 'spc_bb_ply_34', common_name: 'Baltic Birch Ply 3/4"', botanical: null, kind: 'sheet', cost_bf: 70, thicknesses: ['3/4'], shrink_tan_pct: null },
 ]
 
 describe('buildCutlistOpts', () => {
   it('maps the species list into a cost/kind lookup', () => {
     const opts = buildCutlistOpts(SPECIES, null)
-    expect(opts.species.spc_red_oak).toEqual({ kind: 'solid', cost_bf: 5.5, common_name: 'Red Oak' })
+    expect(opts.species.spc_red_oak).toEqual({ kind: 'solid', cost_bf: 5.5, common_name: 'Red Oak', shrink_tan_pct: 8.6 })
     expect(opts.species.spc_bb_ply_34.kind).toBe('sheet')
   })
 
