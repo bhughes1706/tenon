@@ -87,6 +87,32 @@ describe('machiningNotes', () => {
     expect(dado.get('brd_a')).toEqual(['dado 1/2 × 1/4']) // width = t_b = 1/2, depth = t_a/3 = 1/4
   })
 
+  it('chunk 16 box joint: notes the finger count × pin width on both members', () => {
+    // W = min(4, 6) = 4; t_thin = min(0.5, 0.5) = 0.5 → p = 1/2, n = 7 (§2 fixture).
+    const front = board({ id: 'brd_a', dims: { l: 18, w: 4, t: 0.5 } })
+    const side = board({ id: 'brd_b', dims: { l: 12, w: 6, t: 0.5 } })
+    const notes = machiningNotes(model([front, side], [joint('box_joint', 'brd_a', 'brd_b')]))
+    expect(notes.get('brd_a')).toEqual(['box joint 7 fingers × 1/2'])
+    expect(notes.get('brd_b')).toEqual(['box joint 7 fingers × 1/2'])
+  })
+
+  it('chunk 16 through dovetail: sockets on a, tails on b (count + mean tail width)', () => {
+    // W = 12, t_b = 3/4, through → ℓ = t_a = 3/4, 1:8 → N = 5, T̄ = 1-1/2 (§4 case side).
+    const pinBoard = board({ id: 'brd_a', dims: { l: 18, w: 12, t: 0.75 } })
+    const tailBoard = board({ id: 'brd_b', dims: { l: 18, w: 12, t: 0.75 } })
+    const notes = machiningNotes(model([pinBoard, tailBoard], [joint('dovetail', 'brd_a', 'brd_b')]))
+    expect(notes.get('brd_a')).toEqual(['dovetail sockets: 5 tails 1:8'])
+    expect(notes.get('brd_b')).toEqual(['dovetail tails: 5 @ 1-1/2'])
+  })
+
+  it('chunk 16 half-blind dovetail: the socket note carries the lap', () => {
+    // t_a = 3/4 → default lap = t_a/4 = 3/16.
+    const front = board({ id: 'brd_a', dims: { l: 18, w: 3, t: 0.75 } })
+    const side = board({ id: 'brd_b', dims: { l: 18, w: 3, t: 0.5 } })
+    const notes = machiningNotes(model([front, side], [joint('dovetail', 'brd_a', 'brd_b', { variant: 'half_blind' })]))
+    expect(notes.get('brd_a')?.[0]).toMatch(/^dovetail sockets: \d+ tails 1:8, half-blind lap 3\/16$/)
+  })
+
   it('edge grooves are board-level notes', () => {
     const stile = board({
       id: 'brd_a',

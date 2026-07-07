@@ -14,6 +14,12 @@ export const WarningCode = {
   HAUNCH_GROOVE_MISMATCH: 'HAUNCH_GROOVE_MISMATCH', // haunch stub won't seat in the groove it should fill
   WEDGE_NEEDS_THROUGH: 'WEDGE_NEEDS_THROUGH', // wedged M&T on a blind mortise — flare/kerfs skipped
   DRAWBORE_NO_ROOM: 'DRAWBORE_NO_ROOM', // pin setback lands past the tenon — pin skipped
+  // chunk 16 — box joint + dovetail (docs/chunk16-design.md §6)
+  BOX_THIN_END_PIN: 'BOX_THIN_END_PIN', // box-joint end fingers < half the pin width
+  BOX_NOT_THROUGH: 'BOX_NOT_THROUGH', // box fingers stop short of the outer face (through by definition)
+  DOVETAIL_THIN_PIN: 'DOVETAIL_THIN_PIN', // narrowest pin/half-pin under 1/4" — no chisel / fragile
+  DOVETAIL_NOT_THROUGH: 'DOVETAIL_NOT_THROUGH', // through-dovetail tails stop short of showing
+  DOVETAIL_LAP_CAPPED: 'DOVETAIL_LAP_CAPPED', // half-blind engagement capped by the lap
 } as const
 
 export type WarningCode = (typeof WarningCode)[keyof typeof WarningCode]

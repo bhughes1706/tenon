@@ -146,6 +146,38 @@ const CASES: Case[] = [
     removedA: 2 * (0.5 * 0.75 * 1.5),
     removedB: 1.5 * 3 * 1.5 - 2 * (0.5 * 0.75 * 1.5), // overlap block minus the two tenons
   },
+  // ── Chunk 16 (docs/chunk16-design.md) ─────────────────────────────────────────
+  // Box corner: a's +x end meets b (rot y-90 → length along a's thickness z). Corner cube
+  // R = x[2.25,3]×y[-6,6]×z[-0.375,0.375] → W=12, t_b=0.75, ℓ=0.75 (through). W/p=16 → n=15
+  // (tie→smaller), w_end=1.125. start='pin' → a removes 7 interior sockets (0.75 each), b the
+  // 8 it keeps (two 1.125 ends + six 0.75). Bands tile R → complement invariant.
+  {
+    name: 'box_joint',
+    a: board({ id: 'brd_a', l: 6, w: 12, t: 0.75, pos: [0, 0, 0] }),
+    b: board({ id: 'brd_b', l: 4, w: 12, t: 0.75, pos: [2.625, 0, 1.625], rot: [0, 90, 0] }),
+    removedA: 5.25 * 0.75 * 0.75, // 7 × 0.75 wide × t_b × ℓ = 2.953125
+    removedB: 6.75 * 0.75 * 0.75, // (2×1.125 + 6×0.75) × t_b × ℓ = 3.796875
+  },
+  // Through dovetail (§4 case-side fixture): same corner cube, 1:8, ℓ=3/4 → N=5, T̄=1.5.
+  // a (pin board) loses 5 tail sockets; b (tail board) loses the pins + edge half-pins.
+  {
+    name: 'dovetail',
+    a: board({ id: 'brd_a', l: 6, w: 12, t: 0.75, pos: [0, 0, 0] }),
+    b: board({ id: 'brd_b', l: 4, w: 12, t: 0.75, pos: [2.625, 0, 1.625], rot: [0, 90, 0] }),
+    removedA: 5 * 1.5 * 0.75 * 0.75, // N·T̄·ℓ·t_b = 4.21875
+    removedB: 12 * 0.75 * 0.75 - 5 * 1.5 * 0.75 * 0.75, // W·ℓ·t_b − a = 2.53125
+  },
+  // Half-blind drawer (§4 drawer fixture): W=3, t_a=3/4, t_b=1/2, lap 3/16 → ℓ=9/16, N=2.
+  // b stops at the lap wall (engagement = ℓ, no cap warning); sockets stay open on a's end.
+  {
+    name: 'dovetail',
+    label: 'dovetail (half-blind drawer)',
+    a: board({ id: 'brd_a', l: 6, w: 3, t: 0.75, pos: [0, 0, 0] }),
+    b: board({ id: 'brd_b', l: 4, w: 3, t: 0.5, pos: [2.75, 0, 1.8125], rot: [0, 90, 0] }),
+    params: { variant: 'half_blind' },
+    removedA: 2 * (6 / 7) * 0.5625 * 0.5, // N·T̄·ℓ·t_b ≈ 0.482143
+    removedB: 3 * 0.5625 * 0.5 - 2 * (6 / 7) * 0.5625 * 0.5, // W·ℓ·t_b − a ≈ 0.361607
+  },
 ]
 
 describe('JointFns — removed volume (§6.1, ± 0.001 in³)', () => {
@@ -189,6 +221,69 @@ describe('half_lap — complement (§6.1: removed_a + removed_b = overlap)', () 
     const removedB = removedVolume(c.b, meshes.get('brd_b')!)
     const overlap = 2 * 2 * 0.75
     expect(removedA + removedB).toBeCloseTo(overlap, 3)
+  })
+})
+
+// Chunk 16: the box joint and both dovetail variants partition the corner cube exactly —
+// a's fingers/sockets and b's complement tile R with no gap and no double-cut (§3/§5).
+describe('box_joint / dovetail — complement (§6.1: removed_a + removed_b = W·ℓ·t_b)', () => {
+  const cube = (c: Case) => {
+    // R extent = the true carve volume (through box: 0.75³·… ; half-blind uses ℓ<t_a).
+    // Derive it from removedA + removedB the fixtures already assert against the mesh.
+    return c.removedA + c.removedB
+  }
+  for (const c of CASES.filter((x) => x.name === 'box_joint' || x.name === 'dovetail')) {
+    it(`${c.label ?? c.name}: a + b exactly tile the corner cube`, async () => {
+      const meshes = await carve(jointModel(c.a, c.b, c.name, c.params))
+      const removedA = removedVolume(c.a, meshes.get('brd_a')!)
+      const removedB = removedVolume(c.b, meshes.get('brd_b')!)
+      expect(removedA + removedB).toBeCloseTo(cube(c), 3)
+    })
+  }
+})
+
+describe('box_joint / dovetail — warnings (docs/chunk16-design.md §3/§5)', () => {
+  const codes = async (a: Board, b: Board, type: JointType, params: Record<string, unknown> = {}) =>
+    (await evaluate(jointModel(a, b, type, params))).warnings.map((w) => w.code)
+
+  it('a clean through box corner raises no warnings', async () => {
+    const c = CASES.find((x) => x.name === 'box_joint')!
+    expect(await codes(c.a, c.b, 'box_joint')).toEqual([])
+  })
+
+  it('a box corner short of the outer face warns BOX_NOT_THROUGH (carves anyway)', async () => {
+    // b penetrates only part of a's thickness (z engagement < t_a).
+    const a = board({ id: 'brd_a', l: 6, w: 12, t: 0.75, pos: [0, 0, 0] })
+    const b = board({ id: 'brd_b', l: 4, w: 12, t: 0.75, pos: [2.625, 0, 2.2], rot: [0, 90, 0] })
+    expect(await codes(a, b, 'box_joint')).toContain('BOX_NOT_THROUGH')
+  })
+
+  it('a clean through dovetail raises no warnings', async () => {
+    const c = CASES.find((x) => x.name === 'dovetail' && !x.label)!
+    expect(await codes(c.a, c.b, 'dovetail')).toEqual([])
+  })
+
+  it('a through dovetail short of the show face warns DOVETAIL_NOT_THROUGH', async () => {
+    const a = board({ id: 'brd_a', l: 6, w: 12, t: 0.75, pos: [0, 0, 0] })
+    const b = board({ id: 'brd_b', l: 4, w: 12, t: 0.75, pos: [2.625, 0, 2.2], rot: [0, 90, 0] })
+    expect(await codes(a, b, 'dovetail')).toContain('DOVETAIL_NOT_THROUGH')
+  })
+
+  it('a half-blind drawer that seats past the lap warns DOVETAIL_LAP_CAPPED', async () => {
+    // b reaches a's full thickness (engagement = t_a) so the lap must cap the sockets.
+    const a = board({ id: 'brd_a', l: 6, w: 3, t: 0.75, pos: [0, 0, 0] })
+    const b = board({ id: 'brd_b', l: 4, w: 3, t: 0.5, pos: [2.75, 0, 1.625], rot: [0, 90, 0] })
+    expect(await codes(a, b, 'dovetail', { variant: 'half_blind' })).toContain('DOVETAIL_LAP_CAPPED')
+  })
+
+  it('a too-steep dovetail is rejected (no carve) with a teaching reason', async () => {
+    const a = board({ id: 'brd_a', l: 6, w: 3, t: 0.75, pos: [0, 0, 0] })
+    const b = board({ id: 'brd_b', l: 4, w: 3, t: 0.75, pos: [2.625, 0, 1.625], rot: [0, 90, 0] })
+    const { boards, warnings } = await evaluate(jointModel(a, b, 'dovetail', { slope: '1:1' }))
+    expect(warnings.map((w) => w.code)).toContain('JOINT_PRECONDITION_FAILED')
+    // No cutters applied → both boards are full base solids.
+    const meshes = new Map(boards.map((x) => [x.id, x.mesh]))
+    expect(meshVolume(meshes.get('brd_a')!.positions)).toBeCloseTo(6 * 3 * 0.75, 3)
   })
 })
 
@@ -465,11 +560,18 @@ describe('pair-frame carving — assembly rotated off-axis', () => {
 })
 
 describe('evaluate — joint-level warnings', () => {
-  it('warns JOINT_FEATURE_UNIMPLEMENTED for a deferred joint type (box_joint)', async () => {
+  it('warns JOINT_FEATURE_UNIMPLEMENTED for the still-deferred miter (§5.9, v1.5)', async () => {
     const a = board({ id: 'brd_a', l: 6, w: 4, t: 0.75, pos: [0, 0, 0] })
     const b = board({ id: 'brd_b', l: 6, w: 4, t: 0.75, pos: [0, 4, 0] })
-    const { warnings } = await evaluate(jointModel(a, b, 'box_joint'))
+    const { warnings } = await evaluate(jointModel(a, b, 'miter'))
     expect(warnings.map((w) => w.code)).toContain('JOINT_FEATURE_UNIMPLEMENTED')
+  })
+
+  it('box_joint and dovetail now CARVE (no JOINT_FEATURE_UNIMPLEMENTED) — chunk 16', async () => {
+    for (const c of CASES.filter((x) => x.name === 'box_joint' || x.name === 'dovetail')) {
+      const { warnings } = await evaluate(jointModel(c.a, c.b, c.name, c.params))
+      expect(warnings.map((w) => w.code)).not.toContain('JOINT_FEATURE_UNIMPLEMENTED')
+    }
   })
 
   it('warns JOINT_PRECONDITION_FAILED and carves uncut when boards no longer touch', async () => {

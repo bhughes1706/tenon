@@ -76,6 +76,25 @@ const GOLDENS: Golden[] = [
     b: board({ id: 'brd_b', l: 4, w: 3, t: 1.5, pos: [0, 0, 1.25], rot: [0, 90, 0] }),
     params: { wedged: true, twin: true },
   },
+  // ── chunk 16 (docs/chunk16-design.md): box fingers + dovetail frusta are new surface ──
+  {
+    name: 'box_joint',
+    a: board({ id: 'brd_a', l: 6, w: 12, t: 0.75, pos: [0, 0, 0] }),
+    b: board({ id: 'brd_b', l: 4, w: 12, t: 0.75, pos: [2.625, 0, 1.625], rot: [0, 90, 0] }),
+  },
+  {
+    name: 'dovetail',
+    label: 'dovetail (through case side)',
+    a: board({ id: 'brd_a', l: 6, w: 12, t: 0.75, pos: [0, 0, 0] }),
+    b: board({ id: 'brd_b', l: 4, w: 12, t: 0.75, pos: [2.625, 0, 1.625], rot: [0, 90, 0] }),
+  },
+  {
+    name: 'dovetail',
+    label: 'dovetail (half-blind drawer)',
+    a: board({ id: 'brd_a', l: 6, w: 3, t: 0.75, pos: [0, 0, 0] }),
+    b: board({ id: 'brd_b', l: 4, w: 3, t: 0.5, pos: [2.75, 0, 1.8125], rot: [0, 90, 0] }),
+    params: { variant: 'half_blind' },
+  },
 ]
 
 const round6 = (n: number): number => Math.round(n * 1e6) / 1e6

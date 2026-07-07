@@ -1,10 +1,10 @@
 # Tenon — Agent Handoff Document
 
-**Date:** 2026-07-07 (chunk 15 COMPLETE — cut list glue-up + panel auto-sizing. §15 governs
-chunk numbering, not this file's section order — see the completion log below for what
-"chunk N" maps to. **Next unbuilt feature: chunk 16, box joint + dovetail**
-(`docs/chunk16-design.md` has the full derivation, ready to implement). Chunk 17 = bid
-engine.)  
+**Date:** 2026-07-07 (chunk 16 COMPLETE — box joint + dovetail. §15 governs chunk
+numbering, not this file's section order — see the completion log below for what
+"chunk N" maps to. **Next unbuilt feature: chunk 17, router mode / edge profiles**
+(`docs/chunk17-design.md` has the full derivation, verified 2026-07-07, ready to
+implement). Chunk 18 = bid engine.)  
 **Repo:** https://github.com/bhughes1706/tenon  
 **Spec:** `docs/tenon-spec-v0.4.md` (always load this — it is the ground truth)
 
@@ -18,6 +18,22 @@ engine.)
 
 ## Completion log (one paragraph per chunk — see docs/chunkN-design.md for full detail)
 
+- **✅ Chunk 16 (2026-07-07) — box joint + dovetail spacing solver + carve.** Pure
+  spacing solvers (`eval/joints/spacing.ts` `boxSpacing`/`dovetailSpacing`), two new
+  JointFns (`boxJoint.ts`, `dovetail.ts`), and corner-frame preconditions
+  (`geometry/preconditions.ts`) per `docs/chunk16-design.md` §1–5. Box joint is
+  `CutterBox`-only; every dovetail cut is a `CutterFrustum` (chunk 12's trapezoid
+  primitive) — no new cutter shape needed. **Bug found + fixed during the property-test
+  pass:** `solids.ts overcutFrustumToBoard` pushed a flush frustum station outward
+  without adjusting that station's cross-section, which re-spreads the taper's linear
+  interpolation over the longer span instead of extruding a flat cap — corrupting the
+  cross-section exactly at the true board face and silently over-removing material on
+  every tapered cutter (caught by the dovetail §6.1 complement test; the sloped-haunch
+  M&T frustum had the same latent bug, just under the old tolerance). Fixed by
+  extrapolating each moved station along the *original* taper line instead of holding
+  its rect fixed. Also broadened `dovetailSpacing`'s degenerate check — it only caught
+  a collapsing tail base (`tBase ≤ 0`); a steep slope over a shallow (N=1) layout can
+  collapse a pin/half-pin tip first while the tail stays positive.
 - **✅ Chunk 15 (2026-07-07) — glue-up strip math + panel auto-sizing.** Printable/CSV
   export (`web/src/lib/cutlist.ts` `cutlistToHtml`/`cutlistToCsv`/`printCutlist`) already
   shipped in chunk 10 — this chunk was the two pieces chunk 10 explicitly deferred.
@@ -203,7 +219,7 @@ DEPLOYMENT.md      — first-time mini-PC setup reference
 corepack pnpm --filter @tenon/core typecheck
 corepack pnpm --filter @tenon/server typecheck
 corepack pnpm --filter @tenon/web typecheck
-corepack pnpm --filter @tenon/core test      # 191 tests (+1 perf.bench skipped) as of chunk 14
+corepack pnpm --filter @tenon/core test      # 236 tests (+1 perf.bench skipped) as of chunk 16
 corepack pnpm --filter @tenon/server test    # 32 tests as of chunk 14 (needs Node 22 — see gotcha #2)
 corepack pnpm --filter @tenon/web test       # 89 tests (jsdom)
 ./deploy/deploy.sh                           # full build + deploy to mini-canterbury
@@ -368,9 +384,10 @@ This does not block chunk 9. It can be applied as a one-commit patch at any poin
 | ~~12~~ | ~~Mortise & tenon (full §5.6 param set)~~ | **DONE** (photo capture shipped in chunk 4, not 12) |
 | ~~13~~ | ~~`apply_model_ops`/`get_model`/`validate_model` MCP + "errors must teach" pass~~ | **DONE** |
 | ~~14~~ | ~~`render_view` (Puppeteer) + thumbnails~~ | **DONE** |
-| **16 (§15)** | **Box joint + dovetail spacing solver + carve** — `docs/chunk16-design.md` has the full derivation, ready to implement | 10/simple-joints (done) — **the real NEXT unbuilt feature**, reordered ahead of the bid engine 2026-07-07 |
-| 17 (§15) | Bid engine (materials + hardware from cut list × waste × cost + labor categories + overhead + margin), estimate-vs-actual, printable bid, `estimate_bid` MCP tool | 15/cut-list |
-| 17.5–19 (§15) | 3D print export (3MF), profiles/turnings, settings screen full impl, wood textures, shop-mode density | various |
+| ~~16~~ | ~~Box joint + dovetail spacing solver + carve~~ | **DONE** |
+| **17 (§15)** | **Router mode: bit store + edge profiles (§3.5) + `CutterProfile` swept cutter + cutlist notes + viewport arris picking** — `docs/chunk17-design.md` (derivation verified 2026-07-07, ready to implement) | 9, 2 — **the real NEXT unbuilt feature** |
+| 18 (§15) | Bid engine (materials + hardware from cut list × waste × cost + labor categories + overhead + margin), estimate-vs-actual, printable bid, `estimate_bid` MCP tool | 15/cut-list |
+| 18.5–20 (§15) | 3D print export (3MF), profiles/turnings, settings screen full impl, wood textures, shop-mode density | various |
 
 **Phase boundary:** Chunks 1–6 = Phase 1 ("Foundation") — the spec's survival milestone. Jobs/photos/MCP is a complete usable product. **Chunk 7 begins Phase 2 ("Assembly").**
 

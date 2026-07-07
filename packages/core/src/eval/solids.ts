@@ -67,28 +67,47 @@ export function buildCutter(M: ManifoldStatic, box: CutterBox): { manifold: Mani
 
 // Overcut (gotcha #4) for a frustum, mirroring overcutToBoard. Two rules cover every
 // frustum this codebase emits (docs/chunk12-design.md §1): a STATION plane flush with a
-// board face is pushed out (rect kept — an extrusion of the end cross-section), and a rect
-// bound flush at BOTH stations is pushed out on both. A rect bound flush at only one
+// board face is pushed out as a straight extrusion of the true end cross-section, and a
+// rect bound flush at BOTH stations is pushed out on both. A rect bound flush at only one
 // station (a sloped face grazing the surface) does not occur and would stay exact.
+//
+// A pushed-out station must NOT keep interpolating the taper: `buildFrustumCutter` builds
+// a single hull between the two (possibly moved) stations, so if the far station just kept
+// its true rect value while the span grew, the hull would re-spread that same taper over
+// the now-longer span — shifting the cross-section AT THE TRUE FACE away from the exact
+// rect the analytic volume assumes (this silently over/under-removed material on every
+// dovetail pin/tail — the bug the §6.1 complement test caught). The fix: extrapolate each
+// moved station's rect along the ORIGINAL (true station) taper line, so the interpolated
+// cross-section at the true station is reproduced exactly and the extension beyond it is a
+// straight cap.
 export function overcutFrustumToBoard(f: CutterFrustum, board: Board): CutterFrustum {
   const h: Vec3 = [board.dims.l / 2, board.dims.w / 2, board.dims.t / 2]
   const [u, v] = frustumRectAxes(f.axis)
-  const span: [number, number] = [...f.span]
-  const lo = { min: [...f.rectLo.min] as [number, number], max: [...f.rectLo.max] as [number, number] }
-  const hi = { min: [...f.rectHi.min] as [number, number], max: [...f.rectHi.max] as [number, number] }
-  if (span[0] <= -h[f.axis] + FLUSH_EPS) span[0] = -h[f.axis] - OVERCUT
-  if (span[1] >= h[f.axis] - FLUSH_EPS) span[1] = h[f.axis] + OVERCUT
+  const [a, b] = f.span
+  let aNew = a
+  let bNew = b
+  if (a <= -h[f.axis] + FLUSH_EPS) aNew = -h[f.axis] - OVERCUT
+  if (b >= h[f.axis] - FLUSH_EPS) bNew = h[f.axis] + OVERCUT
+
+  const span0 = b - a
+  const rectAt = (t: number): { min: [number, number]; max: [number, number] } => ({
+    min: [0, 1].map((i) => f.rectLo.min[i] + (f.rectHi.min[i] - f.rectLo.min[i]) * t) as [number, number],
+    max: [0, 1].map((i) => f.rectLo.max[i] + (f.rectHi.max[i] - f.rectLo.max[i]) * t) as [number, number],
+  })
+  const lo = span0 > 1e-12 ? rectAt((aNew - a) / span0) : { min: [...f.rectLo.min] as [number, number], max: [...f.rectLo.max] as [number, number] }
+  const hi = span0 > 1e-12 ? rectAt((bNew - a) / span0) : { min: [...f.rectHi.min] as [number, number], max: [...f.rectHi.max] as [number, number] }
+
   for (const [i, axis] of [[0, u], [1, v]] as const) {
-    if (lo.min[i] <= -h[axis] + FLUSH_EPS && hi.min[i] <= -h[axis] + FLUSH_EPS) {
+    if (f.rectLo.min[i] <= -h[axis] + FLUSH_EPS && f.rectHi.min[i] <= -h[axis] + FLUSH_EPS) {
       lo.min[i] = -h[axis] - OVERCUT
       hi.min[i] = -h[axis] - OVERCUT
     }
-    if (lo.max[i] >= h[axis] - FLUSH_EPS && hi.max[i] >= h[axis] - FLUSH_EPS) {
+    if (f.rectLo.max[i] >= h[axis] - FLUSH_EPS && f.rectHi.max[i] >= h[axis] - FLUSH_EPS) {
       lo.max[i] = h[axis] + OVERCUT
       hi.max[i] = h[axis] + OVERCUT
     }
   }
-  return { ...f, span, rectLo: lo, rectHi: hi }
+  return { ...f, span: [aNew, bNew], rectLo: lo, rectHi: hi }
 }
 
 // Frustum → Manifold via the convex hull of its 8 corners; asOriginal() mints the

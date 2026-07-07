@@ -13,6 +13,9 @@
 import type { Board } from '../board.js'
 import type { JointType } from '../joint.js'
 import { pairFrame, overlapRegion, extent, type PairFrame, type AABB, type Vec3 } from './aabb.js'
+// spacing.ts is a PURE solver (numbers in / layout out, no WASM) so importing it here keeps
+// preconditions.ts — and the WASM-free base @tenon/core entry — clean (docs/chunk16 §1).
+import { boxSpacing } from '../eval/joints/spacing.js'
 
 export interface PrecondResult {
   ok: boolean
@@ -142,8 +145,42 @@ export function checkJointPrecondition(
       return OK
     }
 
-    // box_joint / dovetail / miter geometry is deferred this chunk (§5.7/§5.8/§5.9);
-    // contact is still required so an obviously-disjoint pair is caught.
+    case 'box_joint':
+    case 'dovetail': {
+      // Both join two board ends at a corner (docs/chunk16-design.md §1): b's length must
+      // run along a's thickness (eAxis=2) and the two widths must be parallel (wAxis=1).
+      const insertion = dominantAxis(frame.bAxes[0])
+      if (insertion !== 2) {
+        return {
+          ok: false,
+          reason: `${b.name} meets ${a.name} along its length — a ${type === 'box_joint' ? 'box joint' : 'dovetail'} joins two board ends at a corner. Bring ${b.name}'s end into ${a.name}'s thickness.`,
+        }
+      }
+      const widthAxis = dominantAxis(frame.bAxes[1])
+      if (widthAxis !== 1) {
+        return {
+          ok: false,
+          reason: `${a.name} and ${b.name} don't share a face — a ${type === 'box_joint' ? 'box joint' : 'dovetail'} needs their widths parallel. Rotate ${b.name} so its width runs with ${a.name}'s.`,
+        }
+      }
+      if (type === 'box_joint') {
+        // The width solver must fit at least three fingers with positive end fingers.
+        const W = ext[1]
+        const tThin = Math.min(a.dims.t, b.dims.t)
+        const pinWidth = typeof params.pin_width === 'number' ? params.pin_width : undefined
+        const lay = boxSpacing(W, tThin, { pinWidth })
+        if (lay.wEnd <= 0) {
+          return {
+            ok: false,
+            reason: `A ${fmt(lay.p)} pin width is too wide for a ${fmt(W)}-wide joint — it needs more than ${fmt(lay.p)} of width for three fingers. Reduce pin_width or widen the boards.`,
+          }
+        }
+      }
+      return OK
+    }
+
+    // miter geometry is deferred (§5.9); contact is still required above so an obviously
+    // -disjoint pair is caught.
     default:
       return OK
   }

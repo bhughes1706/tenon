@@ -13,6 +13,11 @@ import type { Model } from '../model.js'
 import type { Board } from '../board.js'
 import type { Joint } from '../joint.js'
 import { fmtFraction } from './format.js'
+// The box/dovetail spacing solvers are PURE (numbers in / layout out, no WASM, no Board) —
+// so notes.ts can reuse them and stay on the WASM-free base entry instead of duplicating
+// the count/width math. They're already reached from that entry via geometry/preconditions.
+// (Other joints' dims here are still hand-duplicated defaults, per the header note above.)
+import { boxSpacing, dovetailSpacing } from '../eval/joints/spacing.js'
 
 // role on a Joint: a = receives (mortised/dadoed/rabbeted), b = inserts (tenoned/housed).
 type Push = (boardId: string, note: string) => void
@@ -134,15 +139,34 @@ function jointNote(joint: Joint, a: Board, b: Board, push: Push, f: (n: number) 
       }
       return
     }
-    // Not carved yet (chunk 16 / deferred) — still flag the joinery for the shop.
-    case 'box_joint':
-      push(a.id, 'box joint')
-      push(b.id, 'box joint')
+    case 'box_joint': {
+      // W / t_thin approximated from board dims (shop-accurate, not carve-exact — the carve
+      // uses the actual overlap R); the finger count + pin width come from the §2 solver.
+      const W = Math.min(a.dims.w, b.dims.w)
+      const tThin = Math.min(a.dims.t, b.dims.t)
+      const pinWidth = typeof joint.params.pin_width === 'number' ? joint.params.pin_width : undefined
+      const lay = boxSpacing(W, tThin, { pinWidth })
+      const note = `box joint ${lay.n} fingers × ${f(lay.p)}`
+      push(a.id, note)
+      push(b.id, note)
       return
-    case 'dovetail':
-      push(a.id, 'dovetail')
-      push(b.id, 'dovetail')
+    }
+    case 'dovetail': {
+      const p = joint.params
+      const slope = typeof p.slope === 'string' ? p.slope : '1:8'
+      const variant = p.variant === 'half_blind' ? 'half_blind' : 'through'
+      const W = Math.min(a.dims.w, b.dims.w)
+      // Dims-only depth: through runs the full t_a; half-blind stops at the lap wall.
+      const lapEff = variant === 'half_blind' ? (typeof p.lap === 'number' ? p.lap : a.dims.t / 4) : 0
+      const ell = Math.max(0, a.dims.t - lapEff)
+      const pins = p.pins === 'auto' || typeof p.pins === 'number' ? p.pins : 'auto'
+      const halfPinWidth = typeof p.half_pin_width === 'number' ? p.half_pin_width : undefined
+      const lay = dovetailSpacing({ W, tB: b.dims.t, ell, slope, pins, halfPinWidth })
+      const lapNote = variant === 'half_blind' ? `, half-blind lap ${f(lapEff)}` : ''
+      push(a.id, `dovetail sockets: ${lay.tails} tails ${slope}${lapNote}`)
+      push(b.id, `dovetail tails: ${lay.tails} @ ${f(lay.meanTail)}`)
       return
+    }
     case 'miter':
       push(a.id, 'miter')
       push(b.id, 'miter')

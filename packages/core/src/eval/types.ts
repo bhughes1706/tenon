@@ -27,6 +27,10 @@ export type CutFeatureKind =
   | 'cheek'
   | 'haunch'
   | 'kerf'
+  // chunk 16 — box joint + dovetail (docs/chunk16-design.md)
+  | 'finger' // box-joint finger/socket band (both boards)
+  | 'tail_socket' // dovetail: tail-shaped void removed from a (pin board)
+  | 'pin_socket' // dovetail: pin-shaped void + edge notches removed from b (tail board)
 
 export interface CutFeature {
   id: number // matches the per-triangle provenance index
