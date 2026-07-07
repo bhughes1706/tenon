@@ -1,8 +1,33 @@
 # Tenon — Agent Handoff Document
 
-**Date:** 2026-07-06 (chunk 12 COMPLETE — full §5.6 mortise & tenon: haunch/wedge/drawbore/twin. Numbering note: §15 governs, not this table's old labels — chunk 12 here is the M&T carve, not "photo capture" as previously listed; photo capture shipped in chunk 4. See docs/chunk12-design.md.)  
+**Date:** 2026-07-06 (chunk 13 COMPLETE — "errors must teach" pass on op rejections; the §15-row-13 MCP tools already shipped in chunk 11. Numbering note: §15 governs — chunk 13 is NOT the bid engine; the bid engine is §15 row 16 / Phase 4 and is the next unbuilt feature. Photo capture shipped in chunk 4, not 12.)  
 **Repo:** https://github.com/bhughes1706/tenon  
 **Spec:** `docs/tenon-spec-v0.4.md` (always load this — it is the ground truth)
+
+---
+
+## ✅ CHUNK 13 — COMPLETE (2026-07-06)
+
+**Read `docs/chunk13-design.md`.** §15 row 13 = *`apply_model_ops`/`get_model`/
+`validate_model` MCP + "errors must teach" pass*. The three tools already shipped in
+chunk 11; the remaining (Fable-tagged) deliverable was the **error-quality pass** on op
+rejections — the Claude edit loop only converges if the rejection text teaches recovery.
+
+1. **`validators.ts` — every op rejection now teaches.** Unknown `op` echoes the bad value
+   + lists all valid ops (derived from `OpSchema.options`, can't drift). Referential
+   errors (`noBoard/noJoint/noGroup` helpers) append the ids that DO exist (`known()`,
+   capped at 10) + the same-batch explicit-`board.id` gotcha. Locked / duplicate-id /
+   `transform_board`-pos-or-rot messages spell out the fix. Step-3 preconditions were
+   already teaching (chunk 9) — used as the model. **All prior test substrings preserved.**
+2. **`modelService.ts` — rev-conflict** messages (fast pre-check + CAS race) now name the
+   current rev and the refetch-reapply-retry recovery. Kept the `rev conflict` substring.
+3. **Tests:** +5 `validators.test.ts` "errors must teach (§11.4)" assertions. core **191**
+   (+5) / server **27** / web **89**; server dist manifold refs **0**. Messages also
+   exercised end-to-end through built `dist/`.
+
+**Chunk-numbering correction:** the "What is NOT built" table below had drifted — it listed
+chunk 13 as the bid engine. **§15 governs**: 13 = the MCP/errors pass (done); the **bid
+engine is §15 row 16 (Phase 4)** and is the real next unbuilt feature. Table fixed below.
 
 ---
 
@@ -541,9 +566,10 @@ This does not block chunk 9. It can be applied as a one-commit patch at any poin
 | ~~9~~ | ~~Manifold WASM geometry evaluator in web worker; joint evaluation pipeline; housing/rabbet/half-lap/bridle/butt/M&T (box/dovetail deferred)~~ | **DONE** |
 | ~~10~~ | ~~Cut list (board → rough stock → waste factors), species cost, materials summary~~ | **DONE** (minimal-engine scope; glue-up/movement + `get_cutlist` MCP deferred) |
 | ~~11~~ | ~~Joint dialog + lint resolve flow; face-pick; MCP model loop; `render_view`~~ | **DONE** |
-| ~~12~~ | ~~Mortise & tenon (full §5.6 param set)~~ | **DONE** (photo capture shipped in chunk 4; see the numbering note at the top of this doc) |
-| 13 | `apply_model_ops`/`get_model`/`validate_model` MCP + "errors must teach" pass | 9, 4 — **NEXT CHUNK** |
-| 14–18 | Settings screen full impl, 3D print export (3MF), co-designer polish, doc migrations | various |
+| ~~12~~ | ~~Mortise & tenon (full §5.6 param set)~~ | **DONE** (photo capture shipped in chunk 4; see the numbering note in the CHUNK 13 section) |
+| ~~13~~ | ~~`apply_model_ops`/`get_model`/`validate_model` MCP + "errors must teach" pass~~ | **DONE** |
+| **16 (§15)** | **Bid engine** (materials + hardware from cut list × waste × cost + labor categories + overhead + margin), estimate-vs-actual, printable bid, `estimate_bid` MCP tool | 15/cut-list — **the real NEXT unbuilt feature (Phase 4)** |
+| 16.5–19 (§15) | 3D print export (3MF), profiles/turnings, box joint + dovetail solver, settings screen full impl, wood textures, shop-mode density | various |
 
 **Phase boundary:** Chunks 1–6 = Phase 1 ("Foundation") — the spec's survival milestone. Jobs/photos/MCP is a complete usable product. **Chunk 7 begins Phase 2 ("Assembly").**
 

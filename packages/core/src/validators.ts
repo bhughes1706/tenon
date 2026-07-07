@@ -44,7 +44,7 @@ export function validateOps(ops: unknown[], model: Model): ValidationResult {
       parsed.push(result.data)
     } else {
       for (const issue of result.error.issues) {
-        errors.push(`ops[${i}]: ${formatIssue(issue)}`)
+        errors.push(`ops[${i}]: ${formatIssue(issue, ops[i])}`)
       }
     }
   }
@@ -137,9 +137,42 @@ function checkAddJointPreconditions(parsed: Op[], model: Model): string[] {
   return errors
 }
 
-function formatIssue(issue: z.ZodIssue): string {
+// The op names, derived from OpSchema so the teaching text can never drift from the
+// actual union (add an op → it shows up in every "unknown op" rejection for free).
+const OP_NAMES: string[] = OpSchema.options.map((o) => (o.shape.op as z.ZodLiteral<string>).value)
+
+function formatIssue(issue: z.ZodIssue, raw?: unknown): string {
+  // Unknown `op` value — the single most common Claude mistake (§11.4). Name the value
+  // it sent and list every op it could have meant, so the next attempt converges instead
+  // of guessing. zod's default discriminator message doesn't echo the received value.
+  if (issue.code === z.ZodIssueCode.invalid_union_discriminator) {
+    const got = (raw as { op?: unknown } | null | undefined)?.op
+    const gotStr = typeof got === 'string' ? `'${got}'` : JSON.stringify(got)
+    return `unknown op ${gotStr} — valid ops are: ${OP_NAMES.join(', ')}`
+  }
   return issue.path.length > 0 ? `${issue.path.join('.')}: ${issue.message}` : issue.message
 }
+
+// Errors must teach (§11.4): when an op references an id that isn't there, show the ids
+// that ARE — Claude reads the rejection and retries against real ids rather than guessing.
+// Capped so a large model doesn't dump hundreds of ids into one error string.
+function known(ids: Iterable<string>, kind: string): string {
+  const list = [...ids]
+  if (list.length === 0) return `no ${kind}s exist in this model yet`
+  if (list.length <= 10) return `existing ${kind} ids: ${list.join(', ')}`
+  return `${list.length} ${kind}s exist — fetch the model (get_model) to list their ids`
+}
+
+const noBoard = (id: string, sim: SimState): string =>
+  `board '${id}' does not exist — ${known(sim.boards, 'board')}. To reference a board you're ` +
+  `adding in this same batch, give its add_board an explicit board.id: an omitted id is ` +
+  `server-assigned and not visible to later ops in the batch.`
+
+const noJoint = (id: string, sim: SimState): string =>
+  `joint '${id}' does not exist — ${known(sim.joints.keys(), 'joint')}.`
+
+const noGroup = (id: string, sim: SimState): string =>
+  `group '${id}' does not exist — ${known(sim.groups, 'group')}.`
 
 // Checks one op against the simulated state; on success, applies its effect
 // so subsequent ops in the batch see it.
@@ -148,7 +181,8 @@ function checkAndApply(op: Op, sim: SimState): string[] {
     case 'add_board': {
       const id = op.board.id
       if (id !== undefined) {
-        if (sim.boards.has(id)) return [`board '${id}' already exists`]
+        if (sim.boards.has(id))
+          return [`board '${id}' already exists — omit board.id to have the server assign a fresh one, or pick an id not already in use.`]
         sim.boards.add(id)
         sim.locked.set(id, op.board.locked ?? false)
       }
@@ -156,30 +190,33 @@ function checkAndApply(op: Op, sim: SimState): string[] {
     }
 
     case 'update_board': {
-      if (!sim.boards.has(op.id)) return [`board '${op.id}' does not exist`]
+      if (!sim.boards.has(op.id)) return [noBoard(op.id, sim)]
       // A locked board rejects edits — except the unlock patch itself, so it can
       // be freed again.
       if (sim.locked.get(op.id) && op.patch.locked !== false) {
-        return [`board '${op.id}' is locked`]
+        return [`board '${op.id}' is locked — unlock it first with an update_board patch {"locked": false} (that op may be earlier in this same batch), then apply your edit.`]
       }
       if (op.patch.locked !== undefined) sim.locked.set(op.id, op.patch.locked)
       return []
     }
 
     case 'transform_board': {
-      if (!sim.boards.has(op.id)) return [`board '${op.id}' does not exist`]
-      if (sim.locked.get(op.id)) return [`board '${op.id}' is locked`]
-      if (!op.pos && !op.rot) return ['transform_board requires pos or rot (or both)']
+      if (!sim.boards.has(op.id)) return [noBoard(op.id, sim)]
+      if (sim.locked.get(op.id))
+        return [`board '${op.id}' is locked — unlock it first with update_board {"locked": false}, then move it.`]
+      if (!op.pos && !op.rot)
+        return ['transform_board needs pos or rot (or both) — supply a new position [x,y,z], a rotation [rx,ry,rz], or both.']
       return []
     }
 
     case 'duplicate_board':
       // The duplicate's id is server-assigned; nothing to add to the sim.
-      return sim.boards.has(op.id) ? [] : [`board '${op.id}' does not exist`]
+      return sim.boards.has(op.id) ? [] : [noBoard(op.id, sim)]
 
     case 'remove_board': {
-      if (!sim.boards.has(op.id)) return [`board '${op.id}' does not exist`]
-      if (sim.locked.get(op.id)) return [`board '${op.id}' is locked`]
+      if (!sim.boards.has(op.id)) return [noBoard(op.id, sim)]
+      if (sim.locked.get(op.id))
+        return [`board '${op.id}' is locked — unlock it first with update_board {"locked": false}, then remove it.`]
       sim.boards.delete(op.id)
       sim.locked.delete(op.id)
       // Cascade (§4.1): joints referencing the board go with it.
@@ -192,10 +229,11 @@ function checkAndApply(op: Op, sim: SimState): string[] {
     case 'add_joint': {
       const errs: string[] = []
       const { id, a, b, type } = op.joint
-      if (a === b) errs.push(`joint 'a' and 'b' must be different boards (both '${a}')`)
-      if (!sim.boards.has(a)) errs.push(`board '${a}' does not exist`)
-      if (!sim.boards.has(b)) errs.push(`board '${b}' does not exist`)
-      if (id !== undefined && sim.joints.has(id)) errs.push(`joint '${id}' already exists`)
+      if (a === b) errs.push(`a joint's 'a' and 'b' must be different boards (both were '${a}') — set one side to the other board being joined.`)
+      if (!sim.boards.has(a)) errs.push(noBoard(a, sim))
+      if (!sim.boards.has(b)) errs.push(noBoard(b, sim))
+      if (id !== undefined && sim.joints.has(id))
+        errs.push(`joint '${id}' already exists — omit joint.id to have the server assign a fresh one, or pick an unused id.`)
       if (errs.length > 0) return errs
       if (id !== undefined) sim.joints.set(id, { type, a, b })
       return []
@@ -203,7 +241,7 @@ function checkAndApply(op: Op, sim: SimState): string[] {
 
     case 'update_joint': {
       const joint = sim.joints.get(op.id)
-      if (!joint) return [`joint '${op.id}' does not exist`]
+      if (!joint) return [noJoint(op.id, sim)]
       // Per-type param validation: the patch schema alone can't know the joint
       // type, but we can — validate provided params against the type's schema.
       if (op.patch.params !== undefined) {
@@ -219,7 +257,7 @@ function checkAndApply(op: Op, sim: SimState): string[] {
     }
 
     case 'remove_joint': {
-      if (!sim.joints.has(op.id)) return [`joint '${op.id}' does not exist`]
+      if (!sim.joints.has(op.id)) return [noJoint(op.id, sim)]
       sim.joints.delete(op.id)
       return []
     }
@@ -227,16 +265,17 @@ function checkAndApply(op: Op, sim: SimState): string[] {
     case 'group': {
       const errs: string[] = []
       for (const memberId of op.member_ids) {
-        if (!sim.boards.has(memberId)) errs.push(`board '${memberId}' does not exist`)
+        if (!sim.boards.has(memberId)) errs.push(noBoard(memberId, sim))
       }
-      if (op.id !== undefined && sim.groups.has(op.id)) errs.push(`group '${op.id}' already exists`)
+      if (op.id !== undefined && sim.groups.has(op.id))
+        errs.push(`group '${op.id}' already exists — omit id to have the server assign a fresh one, or pick an unused id.`)
       if (errs.length > 0) return errs
       if (op.id !== undefined) sim.groups.add(op.id)
       return []
     }
 
     case 'ungroup': {
-      if (!sim.groups.has(op.group_id)) return [`group '${op.group_id}' does not exist`]
+      if (!sim.groups.has(op.group_id)) return [noGroup(op.group_id, sim)]
       sim.groups.delete(op.group_id)
       return []
     }

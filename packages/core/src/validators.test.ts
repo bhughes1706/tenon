@@ -498,6 +498,72 @@ describe('validateOps — update_joint param checking', () => {
   })
 })
 
+// ── validateOps — errors must teach (§11.4, chunk 13) ─────────────────────────
+// Rejection messages are what the Claude edit loop reads to self-correct — they must
+// name the bad value AND the concrete recovery, not just state that something is wrong.
+
+describe('validateOps — errors must teach (§11.4)', () => {
+  it('names the bad op and lists every valid op for an unknown op', () => {
+    const result = validateOps([{ op: 'explode_board', id: 'brd_X' }], EMPTY_MODEL)
+    expect(result.ok).toBe(false)
+    expect(result.errors[0]).toMatch(/unknown op 'explode_board'/)
+    // Lists the real ops so the retry converges instead of guessing.
+    expect(result.errors[0]).toMatch(/add_board/)
+    expect(result.errors[0]).toMatch(/set_model_meta/)
+  })
+
+  it('a reference to a missing board lists the ids that DO exist', () => {
+    const result = validateOps(
+      [{ op: 'update_board', id: 'brd_ZZZZZZZZZZ', patch: { name: 'x' } }],
+      MODEL_WITH_BOARDS,
+    )
+    expect(result.ok).toBe(false)
+    expect(result.errors[0]).toMatch(/does not exist/)
+    expect(result.errors[0]).toMatch(/brd_AAAAAAAAAA/) // an id that actually exists
+    // Teaches the same-batch add_board gotcha (explicit ids aren't optional there).
+    expect(result.errors[0]).toMatch(/explicit board\.id/)
+  })
+
+  it('a reference in an empty model teaches that none exist yet', () => {
+    const result = validateOps([{ op: 'remove_board', id: 'brd_ZZZZZZZZZZ' }], EMPTY_MODEL)
+    expect(result.ok).toBe(false)
+    expect(result.errors[0]).toMatch(/no boards? exist/i)
+  })
+
+  it('a locked-board rejection explains how to unlock', () => {
+    const model: Model = {
+      ...EMPTY_MODEL,
+      boards: [BoardSchema.parse({ ...BOARD_A, locked: true })],
+    }
+    const result = validateOps(
+      [{ op: 'transform_board', id: 'brd_AAAAAAAAAA', pos: [1, 0, 0] }],
+      model,
+    )
+    expect(result.ok).toBe(false)
+    expect(result.errors[0]).toMatch(/is locked/)
+    expect(result.errors[0]).toMatch(/locked": false/)
+  })
+
+  it('a duplicate id rejection suggests omitting the id', () => {
+    const ops = [
+      {
+        op: 'add_board',
+        board: {
+          id: 'brd_AAAAAAAAAA',
+          name: 'dup',
+          dims: { l: 1, w: 1, t: 1 },
+          species: 'spc_red_oak',
+          transform: { pos: [0, 0, 0], rot: [0, 0, 0] },
+        },
+      },
+    ]
+    const result = validateOps(ops, MODEL_WITH_BOARDS)
+    expect(result.ok).toBe(false)
+    expect(result.errors[0]).toMatch(/already exists/)
+    expect(result.errors[0]).toMatch(/omit/)
+  })
+})
+
 // ── validateOps — step 3: joint geometric preconditions (chunk 9) ─────────────
 
 describe('validateOps — joint preconditions (§4.2 step 3)', () => {

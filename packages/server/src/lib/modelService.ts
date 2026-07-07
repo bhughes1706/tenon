@@ -114,7 +114,11 @@ export function applyOpsCommit(
         rev: model.rev,
         applied: [],
         warnings: [],
-        errors: [`rev conflict: expected ${expectedRev}, current is ${model.rev}`],
+        errors: [
+          `rev conflict: you sent expected_rev ${expectedRev} but the model is now at rev ${model.rev} — ` +
+          `another edit landed first. Fetch the model again (get_model) for the current rev and doc, ` +
+          `reapply your change on top of it, and retry with expected_rev ${model.rev}.`,
+        ],
       },
     }
   }
@@ -160,7 +164,10 @@ export function applyOpsCommit(
         rev: current?.rev ?? model.rev,
         applied: [],
         warnings: [],
-        errors: [`rev conflict: concurrent write detected`],
+        errors: [
+          `rev conflict: another write committed while this batch was validating (the model is now at ` +
+          `rev ${current?.rev ?? model.rev}) — fetch the model again for the current rev and retry.`,
+        ],
       },
     }
   }
