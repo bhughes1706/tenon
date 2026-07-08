@@ -15,12 +15,15 @@ import type { Warning } from '../common.js'
 import { WarningCode } from '../common.js'
 import { checkJointPrecondition, CONTACT_TOL } from '../geometry/preconditions.js'
 import type { CutFeature, Cutter, EvalCache, EvalCtx, EvalMesh, EvalResult } from './types.js'
-import { isFrustum } from './types.js'
+import { isFrustum, isProfile, cutterBounds } from './types.js'
+import { intersectVolume } from '../geometry/aabb.js'
 import {
   baseSolid,
   buildCutter,
   buildFrustumCutter,
+  buildProfileCutter,
   edgeGrooveCutters,
+  edgeProfileCutters,
   overcutFrustumToBoard,
   overcutToBoard,
 } from './solids.js'
@@ -44,9 +47,11 @@ export function createEvalCache(): EvalCache {
 // does not depend on object-property order.
 function carveKey(board: Board, cutters: Cutter[]): string {
   const c = cutters.map((x) =>
-    isFrustum(x)
-      ? ['F', x.axis, x.span, x.rectLo.min, x.rectLo.max, x.rectHi.min, x.rectHi.max, x.feature, x.jointId ?? null]
-      : [x.min, x.max, x.feature, x.jointId ?? null],
+    isProfile(x)
+      ? ['P', x.axis, x.span, x.corner, x.curve, x.feature, x.edgeProfileId ?? null]
+      : isFrustum(x)
+        ? ['F', x.axis, x.span, x.rectLo.min, x.rectLo.max, x.rectHi.min, x.rectHi.max, x.feature, x.jointId ?? null]
+        : [x.min, x.max, x.feature, x.jointId ?? null],
   )
   return JSON.stringify([board.dims.l, board.dims.w, board.dims.t, c])
 }
@@ -60,7 +65,7 @@ export async function evaluate(model: Model, cache?: EvalCache): Promise<EvalRes
   // 1. Seed every board's cutter list with its edge grooves (board features, §3.4),
   //    then add the joint cutters from each enabled joint's JointFn.
   const cuttersByBoard = new Map<string, Cutter[]>()
-  for (const board of model.boards) cuttersByBoard.set(board.id, edgeGrooveCutters(board))
+  for (const board of model.boards) cuttersByBoard.set(board.id, [...edgeGrooveCutters(board), ...edgeProfileCutters(board)])
 
   const ctx: EvalCtx = { model, tol: CONTACT_TOL }
   for (const joint of model.joints) {
@@ -104,6 +109,37 @@ export async function evaluate(model: Model, cache?: EvalCache): Promise<EvalRes
     stamp(cuttersByBoard.get(joint.b), set.b, joint.id)
     for (const w of set.warnings) {
       warnings.push({ ...w, joints: w.joints ?? [joint.id], boards: w.boards ?? [joint.a, joint.b] })
+    }
+  }
+
+  // 2b. PROFILE_JOINT_OVERLAP (§3): once joint cutters are stamped, warn when an edge
+  //     profile's reach overlaps a joint's cutter bounds on the SAME board. Bounds-level
+  //     AABB test (conservative — may warn on a near-miss); carve still proceeds (lenient
+  //     doctrine, same as every joinery warning). No exact solid-intersection in v1.
+  const jointType = new Map(model.joints.map((j) => [j.id, j.type]))
+  for (const board of model.boards) {
+    const list = cuttersByBoard.get(board.id) ?? []
+    const jointCutters = list.filter((c) => c.jointId != null)
+    if (jointCutters.length === 0) continue
+    const profileById = new Map((board.edge_profiles ?? []).map((p) => [p.id, p]))
+    for (const c of list) {
+      if (!isProfile(c)) continue
+      const pb = cutterBounds(c)
+      for (const jc of jointCutters) {
+        if (intersectVolume(pb, cutterBounds(jc)) <= 0) continue
+        const p = c.edgeProfileId ? profileById.get(c.edgeProfileId) : undefined
+        const arris = p ? `${p.edge}/${p.face}` : 'an'
+        warnings.push({
+          code: WarningCode.PROFILE_JOINT_OVERLAP,
+          joints: jc.jointId ? [jc.jointId] : undefined,
+          boards: [board.id],
+          msg:
+            `${board.name}'s ${arris} edge profile overlaps the ` +
+            `${jc.jointId ? jointType.get(jc.jointId) ?? 'joint' : 'joint'} cut on the same board — ` +
+            `route it before cutting the joint, or move the profile clear. Carve proceeds.`,
+        })
+        break // one warning per profile cutter is enough
+      }
     }
   }
 
@@ -157,11 +193,15 @@ function evaluateBoard(M: ManifoldStatic, board: Board, cutterBoxes: Cutter[]): 
     const cutters: Manifold[] = []
     for (const box of cutterBoxes) {
       const featureId = features.length
-      features.push({ id: featureId, kind: box.feature, jointId: box.jointId })
+      features.push({ id: featureId, kind: box.feature, jointId: box.jointId, edgeProfileId: isProfile(box) ? box.edgeProfileId : undefined })
       // Open flush faces (gotcha #4) just before the carve; interior walls stay exact.
-      const { manifold, originalId } = isFrustum(box)
-        ? buildFrustumCutter(M, overcutFrustumToBoard(box, board))
-        : buildCutter(M, overcutToBoard(box, board))
+      // A profile cutter bakes its own overcut into the extruded cap (§3), so it skips
+      // the box/frustum overcut step entirely.
+      const { manifold, originalId } = isProfile(box)
+        ? buildProfileCutter(M, box)
+        : isFrustum(box)
+          ? buildFrustumCutter(M, overcutFrustumToBoard(box, board))
+          : buildCutter(M, overcutToBoard(box, board))
       idToFeature.set(originalId, featureId)
       trash.push(manifold)
       cutters.push(manifold)

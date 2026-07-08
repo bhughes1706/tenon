@@ -12,6 +12,7 @@ import modelsRouter from './routes/models.js'
 import hardwareRouter from './routes/hardware.js'
 import settingsRouter from './routes/settings.js'
 import speciesRouter from './routes/species.js'
+import bitsRouter from './routes/bits.js'
 import timeLogsRouter from './routes/timeLogs.js'
 import notesRouter from './routes/notes.js'
 import eventsRouter from './routes/events.js'
@@ -62,6 +63,7 @@ app.use('/api/jobs', jobsRouter)
 app.use('/api/models', modelsRouter)
 app.use('/api/settings', settingsRouter)
 app.use('/api/species', speciesRouter)
+app.use('/api/bits', bitsRouter)
 app.use('/api/time_logs', timeLogsRouter)
 app.use('/api/notes', notesRouter)
 app.use('/api/events', eventsRouter)

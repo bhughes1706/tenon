@@ -23,6 +23,7 @@ export const makeBidId = () => make('bid_')
 export const makeTimeLogId = () => make('tlg_')
 export const makeNoteId = () => make('nte_')
 export const makeEdgeGrooveId = () => make('egv_')
+export const makeEdgeProfileId = () => make('epf_')
 export const makeGroupId = () => make('grp_')
 export const makeHardwareId = () => make('hdw_')
 

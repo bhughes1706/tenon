@@ -5,8 +5,9 @@
 // jobs/photos PWA stay WASM-free.
 export { getManifold } from './manifold.js'
 export { evaluate, createEvalCache } from './evaluate.js'
-export { baseSolid, buildCutter, buildFrustumCutter, edgeGrooveCutters, OVERCUT } from './solids.js'
-export { isFrustum, cutterBounds, frustumCorners, frustumRectAxes } from './types.js'
+export { baseSolid, buildCutter, buildFrustumCutter, buildProfileCutter, edgeGrooveCutters, edgeProfileCutters, OVERCUT } from './solids.js'
+export { isFrustum, isProfile, cutterBounds, frustumCorners, frustumRectAxes } from './types.js'
+export { profileCurve, PROFILE_FACETS, COMPOUND_ARC_FACETS } from './profiles.js'
 export { toEvalMesh } from './mesh.js'
 export { jointFaceMesh } from './jointFaces.js'
 export { JOINT_FNS } from './joints/index.js'
@@ -19,6 +20,7 @@ export type {
   Cutter,
   CutterBox,
   CutterFrustum,
+  CutterProfile,
   CutterSet,
   BoardSolid,
   EvalCtx,

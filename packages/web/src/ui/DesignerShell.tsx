@@ -4,7 +4,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import {
   MousePointer2, Plus, Ruler, Layers, AlertTriangle, List,
   Undo2, Redo2, Moon, Sun, Hammer, Search, Move3d, RotateCw,
-  Highlighter, ChevronDown, Pencil, Link2, Link2Off, Trash2,
+  Highlighter, ChevronDown, Pencil, Link2, Link2Off, Trash2, Spline,
 } from 'lucide-react'
 import type { Board, Warning } from '@tenon/core'
 import { generateCutlist, fmtFraction } from '@tenon/core'
@@ -21,6 +21,7 @@ import { Inspector } from './Inspector.js'
 import { AddBoardDialog } from './AddBoardDialog.js'
 import { AssignJobDialog } from './AssignJobDialog.js'
 import { JointDialog } from './JointDialog.js'
+import { RouterPanel } from './RouterPanel.js'
 import { ViewportContextMenu } from './ViewportContextMenu.js'
 import { loadPersistedSize, ResizeHandle, savePersistedSize, ViewSlider } from './kit.js'
 
@@ -269,6 +270,7 @@ export function DesignerShell() {
         case 'v': case 'V': s.setMode('select'); break
         case 'b': case 'B': s.openAddDialog(); break
         case 'm': case 'M': s.setMode('measure'); break
+        case 'e': case 'E': s.setMode('router'); break
         case 'g': case 'G': s.setGizmoMode('translate'); break
         case 'r': case 'R': s.setGizmoMode('rotate'); break
         // §19.2: two overlapping boards selected → J opens the joint dialog.
@@ -361,6 +363,7 @@ export function DesignerShell() {
         <RailBtn active={mode === 'select'} onClick={() => store().setMode('select')} title="Select (V)"><MousePointer2 size={14} /></RailBtn>
         <RailBtn active={mode === 'add'} onClick={() => store().openAddDialog()} title="Add board (B)"><Plus size={14} /></RailBtn>
         <RailBtn active={mode === 'measure'} onClick={() => store().setMode('measure')} title="Measure (M)"><Ruler size={14} /></RailBtn>
+        <RailBtn active={mode === 'router'} onClick={() => store().setMode('router')} title="Router / edge profiles (E)"><Spline size={14} /></RailBtn>
 
         <div style={{ width: 24, height: 1, background: 'var(--border)', margin: '4px 0' }} />
 
@@ -439,6 +442,9 @@ export function DesignerShell() {
           </div>
         )}
 
+        {/* Router bit-store panel (§3.5) — only while painting edge profiles. */}
+        {mode === 'router' && <RouterPanel />}
+
         {/* Mode hint + loading/error overlays */}
         <div style={{
           position: 'absolute', left: 'var(--sp-3)', bottom: 'var(--sp-3)',
@@ -446,7 +452,7 @@ export function DesignerShell() {
           background: 'var(--surface-overlay)', borderRadius: 'var(--radius-s)',
           padding: '2px 6px', border: '1px solid var(--border)', pointerEvents: 'none',
         }}>
-          {mode === 'add' ? 'add' : mode}{mode === 'measure' ? ' · click two points' : ''}
+          {mode === 'add' ? 'add' : mode}{mode === 'measure' ? ' · click two points' : mode === 'router' ? ' · click an arris' : ''}
         </div>
 
         {loading && <CenterNote>Loading model…</CenterNote>}

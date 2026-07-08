@@ -11,7 +11,7 @@ export interface AppCtx {
   settings: Settings | null
   updateSettings: (patch: Partial<Settings>) => void
   selection: string[]
-  mode: 'select' | 'add' | 'measure'
+  mode: 'select' | 'add' | 'measure' | 'router'
   scene: ViewportScene | null
 }
 
@@ -109,6 +109,7 @@ for (const [id, label, icon, shortcut] of [
   ['select',    'Select Tool',   'MousePointer2', 'V'],
   ['add_board', 'Add Board',     'Plus',          'B'],
   ['measure',   'Measure',       'Ruler',         'M'],
+  ['router',    'Router / Edge Profiles', 'Spline', 'E'],
   ['undo',      'Undo',          'Undo2',         '⌘Z'],
   ['redo',      'Redo',          'Redo2',         '⌘⇧Z'],
   ['joint',     'Add Joint…',    'Link',          'J'],

@@ -7,6 +7,7 @@ import { JOINT_PARAM_SCHEMAS } from './joint.js'
 import type { JointType } from './joint.js'
 import type { Warning } from './common.js'
 import { checkJointPrecondition } from './geometry/preconditions.js'
+import { checkEdgeProfiles } from './geometry/edgeProfiles.js'
 
 export type ValidationResult = {
   ok: boolean
@@ -91,15 +92,24 @@ export function validateOps(ops: unknown[], model: Model): ValidationResult {
 function checkAddJointPreconditions(parsed: Op[], model: Model): string[] {
   const boards = new Map<string, Board>(model.boards.map((b) => [b.id, b]))
   const addJointChecks: { index: number; type: JointType; a: string; b: string; params: Record<string, unknown> }[] = []
+  // Boards touched by add_board/update_board → the op index that last touched them, so an
+  // edge-profile error (§3.5) can point back at the op that introduced it.
+  const touched = new Map<string, number>()
 
   parsed.forEach((op, index) => {
     switch (op.op) {
       case 'add_board':
-        if (op.board.id) boards.set(op.board.id, op.board as Board)
+        if (op.board.id) {
+          boards.set(op.board.id, op.board as Board)
+          touched.set(op.board.id, index)
+        }
         break
       case 'update_board': {
         const cur = boards.get(op.id)
-        if (cur) boards.set(op.id, { ...cur, ...op.patch } as Board)
+        if (cur) {
+          boards.set(op.id, { ...cur, ...op.patch } as Board)
+          touched.set(op.id, index)
+        }
         break
       }
       case 'transform_board': {
@@ -133,6 +143,13 @@ function checkAddJointPreconditions(parsed: Op[], model: Model): string[] {
     if (!a || !b) continue // unreachable after step 2, but stay defensive
     const res = checkJointPrecondition(c.type, a, b, c.params)
     if (!res.ok) errors.push(`ops[${c.index}] (add_joint): ${res.reason}`)
+  }
+
+  // Hard edge-profile checks (§3.5) against final batch geometry, on every touched board.
+  for (const [id, index] of touched) {
+    const board = boards.get(id)
+    if (!board) continue
+    for (const msg of checkEdgeProfiles(board)) errors.push(`ops[${index}] (${parsed[index].op}): ${msg}`)
   }
   return errors
 }

@@ -1,6 +1,8 @@
 import { create } from 'zustand'
-import type { Model, Op, OpResult, Warning, Board } from '@tenon/core'
+import type { Model, Op, OpResult, Warning, Board, EdgeProfile } from '@tenon/core'
 import { makeBoardId, makeGroupId } from '@tenon/core'
+import { paintOp } from './routerApply.js'
+import type { Arris } from '../viewport/arrisPick.js'
 import { fetchModel, fetchModelRow, applyModelOps } from './modelApi.js'
 import { applyOpsLocal, invertOps } from './clientOps.js'
 // Collision lint is now core (chunk 9): the same analytic pass runs here for instant
@@ -15,7 +17,7 @@ import type { CommandContext } from './registry.js'
 // main jobs/photos bundle).
 import type { BufferGeometry } from 'three'
 
-export type ViewportMode = 'select' | 'add' | 'measure'
+export type ViewportMode = 'select' | 'add' | 'measure' | 'router'
 export type GizmoMode = 'translate' | 'rotate'
 export type DesignerPanel = 'outliner' | 'lint' | 'cutlist' | null
 export type ViewPreset = 'iso' | 'front' | 'top' | 'right'
@@ -44,6 +46,9 @@ interface ModelState {
   selectedJointId: string | null
   hovered: string | null
   mode: ViewportMode
+  // Router mode (§3.5): the bit currently loaded for painting arrises. Its dims are
+  // copied onto each painted edge profile (denormalized) — the store never dereferences it.
+  routerBitId: string | null
   gizmoMode: GizmoMode
   panel: DesignerPanel
   // Authoritative analytic lint (collision + precondition) — server-sourced, see below.
@@ -114,6 +119,10 @@ interface ModelState {
   closeJointDialog: () => void
   setHovered: (id: string | null) => void
   setMode: (mode: ViewportMode) => void
+  setRouterBit: (id: string | null) => void
+  // Router paint: toggle `profile` onto `boardId`'s arris — one undoable update_board.
+  // `profile` null (or matching an existing entry) toggles that arris off.
+  paintArris: (boardId: string, arris: Arris, profile: EdgeProfile | null) => Promise<void>
   setGizmoMode: (mode: GizmoMode) => void
   setPanel: (panel: DesignerPanel) => void
   togglePanel: (panel: Exclude<DesignerPanel, null>) => void
@@ -216,6 +225,7 @@ export const useModelStore = create<ModelState>((set, get) => {
     selectedJointId: null,
     hovered: null,
     mode: 'select',
+    routerBitId: null,
     gizmoMode: 'translate',
     panel: null,
     warnings: [],
@@ -434,6 +444,12 @@ export const useModelStore = create<ModelState>((set, get) => {
     closeJointDialog: () => set({ jointDialog: null }),
     setHovered: (id) => set({ hovered: id }),
     setMode: (mode) => set({ mode }),
+    setRouterBit: (routerBitId) => set({ routerBitId }),
+    async paintArris(boardId, arris, profile) {
+      const board = get().model?.boards.find((b) => b.id === boardId)
+      if (!board) return
+      await get().dispatch([paintOp(board, arris, profile)])
+    },
     setGizmoMode: (gizmoMode) => set({ gizmoMode }),
     setPanel: (panel) => set({ panel }),
     togglePanel: (panel) => set((s) => ({ panel: s.panel === panel ? null : panel })),

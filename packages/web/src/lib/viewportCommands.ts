@@ -14,6 +14,9 @@ export function registerViewportCommands(): void {
   registry.register({ id: 'select', label: 'Select Tool', icon: 'MousePointer2', shortcut: 'V', group: 'Tools', when: inDesigner, run: () => store().setMode('select') })
   registry.register({ id: 'add_board', label: 'Add Board', icon: 'Plus', shortcut: 'B', group: 'Tools', contexts: ['empty'], when: inDesigner, run: () => store().openAddDialog() })
   registry.register({ id: 'measure', label: 'Measure', icon: 'Ruler', shortcut: 'M', group: 'Tools', when: inDesigner, run: () => store().setMode('measure') })
+  // Router mode (§3.5): the one modal tool — an edge profile has no second board to
+  // select against, so it needs a paint mode. Opens the bit-store panel + arms arris paint.
+  registry.register({ id: 'router', label: 'Router / Edge Profiles', icon: 'Spline', shortcut: 'E', group: 'Tools', when: inDesigner, run: () => store().setMode('router') })
 
   // Edit
   registry.register({ id: 'undo', label: 'Undo', icon: 'Undo2', shortcut: '⌘Z', group: 'Edit', when: inDesigner, run: () => void store().undo() })

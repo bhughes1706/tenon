@@ -6,6 +6,8 @@ import type { Board, Model } from '@tenon/core'
 import { worldAABB } from '@tenon/core'
 import { jointMarkers } from '@tenon/core/markers'
 import { pickJoint, extractJointFaces } from './jointPick.js'
+import { pickArris } from './arrisPick.js'
+import { peekBits, bitToEdgeProfile } from '../lib/bitsApi.js'
 import { useModelStore } from '../lib/modelStore.js'
 import { setViewportScene, syncViewportTheme } from '../lib/syncViewportTheme.js'
 import { speciesColor } from '../lib/speciesColors.js'
@@ -351,6 +353,21 @@ function SceneContents({
       if (m === 'measure') {
         e.stopPropagation()
         setMeasurePts((prev) => (prev.length >= 2 ? [e.point.clone()] : [...prev, e.point.clone()]))
+        return
+      }
+      if (m === 'router') {
+        // Paint an edge profile (§3.5): resolve the click to an arris in the board's LOCAL
+        // frame (worldToLocal undoes transform + explode), fill it from the armed bit, and
+        // toggle. No pre-commit dialog — the carve IS the preview (§8), one undo away.
+        e.stopPropagation()
+        const st = useModelStore.getState()
+        const board = st.model?.boards.find((b) => b.id === id)
+        if (!board) return
+        const p = (e.object as THREE.Object3D).worldToLocal(e.point.clone())
+        const arris = pickArris([p.x, p.y, p.z], board.dims)
+        const bit = st.routerBitId ? peekBits().find((b) => b.id === st.routerBitId) : undefined
+        const profile = bit ? bitToEdgeProfile(bit, arris.edge, arris.face) : null
+        void st.paintArris(id, arris, profile)
         return
       }
       if (m === 'select') {

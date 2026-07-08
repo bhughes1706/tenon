@@ -146,6 +146,30 @@ describe('machiningNotes', () => {
     expect(machiningNotes(m).get('brd_r')).toEqual(['tenon 1/4 × 2-1/4 × 1-1/2 ×2'])
   })
 
+  it('edge profiles (§3.5): one note per profile type', () => {
+    const mk = (profile: Record<string, unknown>) =>
+      machiningNotes(model([board({ id: 'brd_a', edge_profiles: [{ id: 'epf_1', edge: 'top', face: 'front', bit_id: null, ...profile }] } as never)])).get('brd_a')
+    expect(mk({ profile: 'roundover', radius: 0.25 })).toEqual(['roundover 1/4R'])
+    expect(mk({ profile: 'cove', radius: 0.5 })).toEqual(['cove 1/2R'])
+    expect(mk({ profile: 'ogee', radius: 0.25 })).toEqual(['ogee 1/4R'])
+    expect(mk({ profile: 'chamfer', width: 0.375 })).toEqual(['chamfer 3/8 (45°)'])
+    expect(mk({ profile: 'rabbet', width: 0.375, depth: 0.1875 })).toEqual(['rabbet 3/8 × 3/16'])
+    // compound uses the bit's label when present
+    expect(mk({ profile: 'compound', label: 'Classical', start: [0.4, 0], segments: [{ kind: 'line', to: [0, 0.4] }] }))
+      .toEqual(['Classical'])
+  })
+
+  it('the same bit run on two arrises collapses to "×2"', () => {
+    const b = board({
+      id: 'brd_a',
+      edge_profiles: [
+        { id: 'epf_1', edge: 'top', face: 'front', bit_id: null, profile: 'roundover', radius: 0.25 },
+        { id: 'epf_2', edge: 'bottom', face: 'front', bit_id: null, profile: 'roundover', radius: 0.25 },
+      ],
+    } as never)
+    expect(machiningNotes(model([b])).get('brd_a')).toEqual(['roundover 1/4R ×2'])
+  })
+
   it('ignores disabled joints and missing board refs', () => {
     const a = board({ id: 'brd_a', dims: { l: 30, w: 2, t: 1.5 } })
     const b = board({ id: 'brd_b', dims: { l: 20, w: 3, t: 0.75 } })

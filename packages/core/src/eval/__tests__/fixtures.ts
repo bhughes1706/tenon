@@ -18,6 +18,7 @@ type BoardSpec = {
   pos: [number, number, number]
   rot?: [number, number, number]
   edge_grooves?: unknown[]
+  edge_profiles?: unknown[]
 }
 
 export function board(spec: BoardSpec): Board {
@@ -28,6 +29,21 @@ export function board(spec: BoardSpec): Board {
     species: SPECIES,
     transform: { pos: spec.pos, rot: spec.rot ?? [0, 0, 0] },
     edge_grooves: spec.edge_grooves ?? [],
+    edge_profiles: spec.edge_profiles ?? [],
+  })
+}
+
+// A one-board model — for board-level features (edge grooves, edge profiles) that need
+// no joint partner.
+export function boardModel(b: Board): Model {
+  return ModelSchema.parse({
+    id: 'mdl_boardtest',
+    rev: 0,
+    name: 'board-test',
+    boards: [b],
+    joints: [],
+    groups: [],
+    meta: META,
   })
 }
 

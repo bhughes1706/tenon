@@ -4,3 +4,4 @@
 export * from './aabb.js'
 export * from './collision.js'
 export * from './preconditions.js'
+export * from './edgeProfiles.js'

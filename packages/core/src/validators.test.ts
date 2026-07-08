@@ -714,3 +714,97 @@ describe('HardwareSchema', () => {
     expect(hw.unit_cost).toBeNull()
   })
 })
+
+// ── Edge profiles (chunk 17, §3.5) ─────────────────────────────────────────────
+
+describe('EdgeProfileSchema', () => {
+  const base = { id: 'epf_AAAAAAAAAA', edge: 'top', face: 'front' }
+
+  it('fills bit_id default null and round-trips a roundover', () => {
+    const p = BoardSchema.parse({
+      ...BOARD_A,
+      edge_profiles: [{ ...base, profile: 'roundover', radius: 0.25 }],
+    }).edge_profiles[0]
+    expect(p).toMatchObject({ profile: 'roundover', radius: 0.25, bit_id: null })
+  })
+
+  it('rejects a stray radius on a rabbet (discriminated union, §11.4)', () => {
+    const bad = BoardSchema.safeParse({
+      ...BOARD_A,
+      edge_profiles: [{ ...base, profile: 'rabbet', width: 0.375, depth: 0.1875, radius: 0.25 }],
+    })
+    expect(bad.success).toBe(false)
+  })
+})
+
+describe('validateOps — edge profiles', () => {
+  const boardWith = (edge_profiles: unknown[], extra: Record<string, unknown> = {}) => ({
+    op: 'add_board',
+    board: {
+      id: 'brd_PPPPPPPPPP',
+      name: 'panel',
+      dims: { l: 12, w: 6, t: 0.75 },
+      species: 'spc_red_oak',
+      transform: { pos: [0, 0, 0], rot: [0, 0, 0] },
+      edge_profiles,
+      ...extra,
+    },
+  })
+
+  it('accepts a valid profile and defaults bit_id to null', () => {
+    const r = validateOps([boardWith([{ id: 'epf_AAAAAAAAAA', edge: 'top', face: 'front', profile: 'roundover', radius: 0.25 }])], EMPTY_MODEL)
+    expect(r.ok).toBe(true)
+    const op = r.ops[0]
+    if (op.op === 'add_board') expect(op.board.edge_profiles[0].bit_id).toBeNull()
+  })
+
+  it('rejects a depth overrun with teaching text', () => {
+    const r = validateOps([boardWith([{ id: 'epf_AAAAAAAAAA', edge: 'top', face: 'front', profile: 'rabbet', width: 0.375, depth: 0.75 }])], EMPTY_MODEL)
+    expect(r.ok).toBe(false)
+    expect(r.errors.join('\n')).toMatch(/would cut through/)
+  })
+
+  it('rejects a reach overrun with teaching text', () => {
+    // reach 3.5 ≥ w/2 = 3 on a top edge
+    const r = validateOps([boardWith([{ id: 'epf_AAAAAAAAAA', edge: 'top', face: 'front', profile: 'roundover', radius: 3.5 }])], EMPTY_MODEL)
+    expect(r.ok).toBe(false)
+    expect(r.errors.join('\n')).toMatch(/meet itself across/)
+  })
+
+  it('rejects a duplicate arris', () => {
+    const r = validateOps([boardWith([
+      { id: 'epf_AAAAAAAAAA', edge: 'top', face: 'front', profile: 'roundover', radius: 0.25 },
+      { id: 'epf_BBBBBBBBBB', edge: 'top', face: 'front', profile: 'chamfer', width: 0.25 },
+    ])], EMPTY_MODEL)
+    expect(r.ok).toBe(false)
+    expect(r.errors.join('\n')).toMatch(/already has a profile on its top front arris/)
+  })
+
+  it('rejects any profile on a floating panel (panel_fit set)', () => {
+    const r = validateOps([boardWith(
+      [{ id: 'epf_AAAAAAAAAA', edge: 'top', face: 'front', profile: 'roundover', radius: 0.25 }],
+      { kind: 'panel', panel_fit: { groove_depth: 0.375 } },
+    )], EMPTY_MODEL)
+    expect(r.ok).toBe(false)
+    expect(r.errors.join('\n')).toMatch(/floating panel/)
+  })
+
+  it('accepts a compound molding path that starts on the face and ends on the wall', () => {
+    const r = validateOps([boardWith([{
+      id: 'epf_AAAAAAAAAA', edge: 'top', face: 'front', profile: 'compound',
+      label: 'classical', start: [0.4, 0],
+      segments: [{ kind: 'arc', to: [0, 0.4], center: [0, 0], dir: 'ccw' }],
+    }])], EMPTY_MODEL)
+    expect(r.ok).toBe(true)
+  })
+
+  it('rejects a compound path that does not start on the face', () => {
+    const r = validateOps([boardWith([{
+      id: 'epf_AAAAAAAAAA', edge: 'top', face: 'front', profile: 'compound',
+      start: [0.4, 0.1], // not on the v = 0 face
+      segments: [{ kind: 'line', to: [0, 0.4] }],
+    }])], EMPTY_MODEL)
+    expect(r.ok).toBe(false)
+    expect(r.errors.join('\n')).toMatch(/must start on the face/)
+  })
+})

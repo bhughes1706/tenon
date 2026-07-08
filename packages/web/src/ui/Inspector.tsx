@@ -1,5 +1,6 @@
 import { Trash2, Lock, Unlock, Link2, Link2Off } from 'lucide-react'
-import type { Board, Joint, Op } from '@tenon/core'
+import type { Board, EdgeProfile, Joint, Op } from '@tenon/core'
+import { fmtFraction } from '@tenon/core'
 import { useModelStore } from '../lib/modelStore.js'
 import { useSpecies } from '../lib/speciesApi.js'
 import { InchInput } from './InchInput.js'
@@ -153,6 +154,26 @@ function BoardInspector({ board, precision }: { board: Board; precision: number 
         </div>
       </Section>
 
+      {(board.edge_profiles ?? []).length > 0 && (
+        <Section title="Routed edges">
+          {(board.edge_profiles ?? []).map((p) => (
+            <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', fontSize: 'var(--text-sm)' }}>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ color: 'var(--text-faint)' }}>{p.edge}/{p.face}</span> {edgeProfileSummary(p)}
+              </span>
+              <button
+                disabled={locked}
+                onClick={() => patch({ edge_profiles: (board.edge_profiles ?? []).filter((x) => x.id !== p.id) })}
+                title="Remove profile"
+                style={{ border: 'none', background: 'transparent', color: 'var(--text-faint)', cursor: locked ? 'default' : 'pointer', padding: 2 }}
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
+          ))}
+        </Section>
+      )}
+
       <Section title="Actions">
         <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
           <button
@@ -255,6 +276,23 @@ function JointInspector({ joint, precision }: { joint: Joint; precision: number 
       </Section>
     </>
   )
+}
+
+// Renders the STORED profile params (§3.5 denormalized), not the live bit — the bit may
+// have been edited or retired since this edge was routed.
+function edgeProfileSummary(p: EdgeProfile): string {
+  switch (p.profile) {
+    case 'roundover':
+    case 'cove':
+    case 'ogee':
+      return `${p.profile} ${fmtFraction(p.radius)}R`
+    case 'chamfer':
+      return `chamfer ${fmtFraction(p.width)}`
+    case 'rabbet':
+      return `rabbet ${fmtFraction(p.width)} × ${fmtFraction(p.depth)}`
+    case 'compound':
+      return p.label ?? 'molding'
+  }
 }
 
 function actionBtn(active: boolean, danger = false): React.CSSProperties {

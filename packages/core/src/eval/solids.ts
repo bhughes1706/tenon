@@ -13,11 +13,12 @@
 // skin; an interior face (a pocket wall) is left exact. JointFns therefore emit the TRUE
 // cut geometry and never reason about overcut — which also keeps removed volumes exact
 // (an overcut that landed inside the board would silently remove extra material).
-import type { Manifold, ManifoldToplevel } from 'manifold-3d'
+import type { Manifold, ManifoldToplevel, Mat4 } from 'manifold-3d'
 import type { Board } from '../board.js'
 import type { Vec3 } from '../geometry/aabb.js'
-import type { CutterBox, CutterFrustum } from './types.js'
+import type { CutterBox, CutterFrustum, CutterProfile } from './types.js'
 import { frustumCorners, frustumRectAxes } from './types.js'
+import { profileCurve } from './profiles.js'
 
 type ManifoldStatic = ManifoldToplevel['Manifold']
 
@@ -155,4 +156,112 @@ export function edgeGrooveCutters(board: Board): CutterBox[] {
     }
   }
   return out
+}
+
+// §1 arris → board-local axes (docs/chunk17-design.md), mirroring edgeGrooveCutters'
+// edge convention extended with the face axis. `axis` is the sweep axis; `uSign` is the
+// board-local sign of the edge's cross-grain normal (the u direction); the first cross
+// axis frustumRectAxes(axis)[0] is that u axis, and its half-extent is the board dim
+// perpendicular to the sweep.
+const EDGE_AXIS: Record<'top' | 'bottom' | 'left' | 'right', 0 | 1> = { top: 0, bottom: 0, left: 1, right: 1 }
+const EDGE_USIGN: Record<'top' | 'bottom' | 'left' | 'right', 1 | -1> = { top: 1, bottom: -1, left: -1, right: 1 }
+
+// Board edge profiles → arris-frame swept-profile cutters (§3). Carved before joint
+// cutters (a board feature, like edge grooves). Curve stays in arris-frame; `axis` +
+// `corner` + `half` carry all placement, resolved by buildProfileCutter.
+export function edgeProfileCutters(board: Board): CutterProfile[] {
+  const out: CutterProfile[] = []
+  for (const p of board.edge_profiles ?? []) {
+    const axis = EDGE_AXIS[p.edge]
+    const span: [number, number] = axis === 0 ? [-board.dims.l / 2, board.dims.l / 2] : [-board.dims.w / 2, board.dims.w / 2]
+    // uAxis = frustumRectAxes(axis)[0]: y (halfU = w/2) for top/bottom, x (halfU = l/2) for left/right.
+    const halfU = axis === 0 ? board.dims.w / 2 : board.dims.l / 2
+    out.push({
+      profileCut: true,
+      axis,
+      span,
+      corner: [EDGE_USIGN[p.edge], p.face === 'front' ? 1 : -1],
+      curve: profileCurve(p),
+      half: [halfU, board.dims.t / 2],
+      feature: 'edge_profile',
+      edgeProfileId: p.id,
+    })
+  }
+  return out
+}
+
+// Signed area of a 2D polygon (shoelace). Positive = CCW.
+function signedArea(poly: [number, number][]): number {
+  let a = 0
+  for (let i = 0; i < poly.length; i++) {
+    const [x1, y1] = poly[i]
+    const [x2, y2] = poly[(i + 1) % poly.length]
+    a += x1 * y2 - x2 * y1
+  }
+  return a / 2
+}
+
+// Swept-profile cutter → Manifold (docs/chunk17-design.md §3). Maps the arris-frame
+// curve into the board-local cross-section plane, closes it with a 3-point overcut cap
+// that clears BOTH flush faces (a 2-point cap would leave a zero-thickness skin along
+// one face — the failure OVERCUT exists to prevent), extrudes along the polygon's local
+// z, then places that z onto the board's sweep `axis` with a single 90°-multiple
+// rotation via an explicit affine matrix. asOriginal() mints the face-provenance id.
+//
+// `half` + `corner` are self-contained here (no Board needed) — same as buildFrustumCutter.
+export function buildProfileCutter(M: ManifoldStatic, c: CutterProfile): { manifold: Manifold; originalId: number } {
+  const [uAxis, vAxis] = frustumRectAxes(c.axis)
+  const [halfU, halfV] = c.half
+  // The overcut cap must enclose the WHOLE curve, so use its max extents — not just the
+  // endpoints. For the analytic primitives the endpoints are the max, but a compound
+  // molding can bulge deeper mid-path (a bead), and a cap sized to the endpoint would let
+  // that bulge poke outside the closing edge and self-intersect the polygon.
+  const reach = Math.max(...c.curve.map((p) => p[0]))
+  const depth = Math.max(...c.curve.map((p) => p[1]))
+
+  // Arris-frame boundary: the profile curve, then the overcut cap around the OUTSIDE of
+  // the corner. Append cap vertices — never move the curve's flush-face endpoints, or the
+  // arc's tangent points no longer land on the true faces (same gotcha as overcutToBoard).
+  const arris: [number, number][] = [
+    ...c.curve,
+    [-OVERCUT, depth],
+    [-OVERCUT, -OVERCUT],
+    [reach, -OVERCUT],
+  ]
+  // Map each arris-frame (u, v) → board-local coords along (uAxis, vAxis). The corner
+  // sign resolves here: +1 → arris at +half, cut reaches back toward the origin.
+  const poly: [number, number][] = arris.map(([u, v]) => [
+    c.corner[0] > 0 ? halfU - u : -halfU + u,
+    c.corner[1] > 0 ? halfV - v : -halfV + v,
+  ])
+  // The corner-sign mapping reverses winding exactly when corner[0]·corner[1] = −1 (a
+  // one-axis reflection). CrossSection's Positive fill rule needs CCW, so normalize by
+  // signed area — an inverted/degenerate cutter would otherwise carve nothing or invert.
+  if (signedArea(poly) < 0) poly.reverse()
+
+  // Extrude along local z, centred, so the run is symmetric about the origin; the cap
+  // already added OVERCUT to both ends, so extrude the full span + 2·OVERCUT.
+  const spanLen = c.span[1] - c.span[0]
+  const extruded = M.extrude(poly, spanLen + 2 * OVERCUT, 0, 0, [1, 1], true)
+
+  // Place the extrusion: poly-x → board uAxis (+), poly-y → board vAxis (+), extrusion
+  // z → board sweep axis. zSign is chosen per axis so the linear map has det +1 (a proper
+  // rotation, not a reflection): axis 0 → +1, axis 1 → −1. Mat4 is column-major; columns
+  // 0..2 are the images of x/y/z, column 3 is the translation.
+  const zSign = c.axis === 0 ? 1 : -1
+  const mid = (c.span[0] + c.span[1]) / 2
+  const col = (axis: number, s: number): [number, number, number] => {
+    const out: [number, number, number] = [0, 0, 0]
+    out[axis] = s
+    return out
+  }
+  const [cx, cy, cz] = [col(uAxis, 1), col(vAxis, 1), col(c.axis, zSign)]
+  const t = col(c.axis, mid)
+  const mat: Mat4 = [cx[0], cx[1], cx[2], 0, cy[0], cy[1], cy[2], 0, cz[0], cz[1], cz[2], 0, t[0], t[1], t[2], 1]
+  const placed = extruded.transform(mat)
+  extruded.delete()
+
+  const manifold = placed.asOriginal()
+  placed.delete()
+  return { manifold, originalId: manifold.originalID() }
 }

@@ -20,6 +20,8 @@ export const WarningCode = {
   DOVETAIL_THIN_PIN: 'DOVETAIL_THIN_PIN', // narrowest pin/half-pin under 1/4" — no chisel / fragile
   DOVETAIL_NOT_THROUGH: 'DOVETAIL_NOT_THROUGH', // through-dovetail tails stop short of showing
   DOVETAIL_LAP_CAPPED: 'DOVETAIL_LAP_CAPPED', // half-blind engagement capped by the lap
+  // chunk 17 — router mode / edge profiles (docs/chunk17-design.md §3)
+  PROFILE_JOINT_OVERLAP: 'PROFILE_JOINT_OVERLAP', // an edge profile's reach overlaps a joint's cutter bounds on the same board
 } as const
 
 export type WarningCode = (typeof WarningCode)[keyof typeof WarningCode]

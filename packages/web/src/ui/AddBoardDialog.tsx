@@ -47,6 +47,7 @@ export function AddBoardDialog({
       locked: false,
       glue_up: null,
       edge_grooves: [],
+      edge_profiles: [],
       panel_fit: null,
     }
     void useModelStore.getState().addBoard(board)

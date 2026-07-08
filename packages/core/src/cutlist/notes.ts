@@ -10,9 +10,10 @@
 // If a JointFn default changes, update the matching branch below.
 
 import type { Model } from '../model.js'
-import type { Board } from '../board.js'
+import type { Board, EdgeProfile } from '../board.js'
 import type { Joint } from '../joint.js'
 import { fmtFraction } from './format.js'
+import { profileExtents } from '../geometry/edgeProfiles.js'
 // The box/dovetail spacing solvers are PURE (numbers in / layout out, no WASM, no Board) —
 // so notes.ts can reuse them and stay on the WASM-free base entry instead of duplicating
 // the count/width math. They're already reached from that entry via geometry/preconditions.
@@ -36,6 +37,12 @@ export function machiningNotes(model: Model, precision = 16): Map<string, string
   for (const board of model.boards) {
     for (const g of board.edge_grooves) {
       push(board.id, `groove ${f(g.width)} × ${f(g.depth)}, ${g.edge}`)
+    }
+    // Board-level edge profiles (§3.5, router mode). Arris-independent so the same bit
+    // run on two arrises collapses to "note ×2"; the geometry is stored on the board,
+    // not looked up from the bit store.
+    for (const p of board.edge_profiles ?? []) {
+      push(board.id, edgeProfileNote(p, f))
     }
   }
 
@@ -171,6 +178,28 @@ function jointNote(joint: Joint, a: Board, b: Board, push: Push, f: (n: number) 
       push(a.id, 'miter')
       push(b.id, 'miter')
       return
+  }
+}
+
+// §3.5 router-bit machining note — one line per profile, arris-independent (see caller).
+function edgeProfileNote(p: EdgeProfile, f: (n: number) => string): string {
+  switch (p.profile) {
+    case 'roundover':
+      return `roundover ${f(p.radius)}R`
+    case 'cove':
+      return `cove ${f(p.radius)}R`
+    case 'ogee':
+      return `ogee ${f(p.radius)}R`
+    case 'chamfer':
+      return `chamfer ${f(p.width)} (45°)`
+    case 'rabbet':
+      return `rabbet ${f(p.width)} × ${f(p.depth)}`
+    case 'compound': {
+      // No closed-form dims — prefer the bit's human label; fall back to the swept extents.
+      if (p.label) return p.label
+      const { reach, depth } = profileExtents(p)
+      return `molding ${f(reach)} × ${f(depth)}`
+    }
   }
 }
 

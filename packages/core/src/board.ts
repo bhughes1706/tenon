@@ -20,6 +20,67 @@ export const EdgeGrooveSchema = z
   .strict()
 export type EdgeGroove = z.infer<typeof EdgeGrooveSchema>
 
+// §3.5 — edge profile (router mode), a board-level feature carved before joint
+// evaluation, like EdgeGrooveSchema above. A router bit shapes ONE arris: an
+// `edge` (top/bottom/left/right, the §3.4 enum) × `face` (front = +thickness,
+// back = −thickness, board-local). Denormalized: the removed geometry (radius/
+// width/depth) lives on the board, not looked up from the `bits` store at eval
+// time, so the worker and WASM-free cut-list server never touch the DB and
+// retiring a bit never invalidates a saved model — `bit_id` is provenance only.
+//
+// Discriminated union on `profile` (§3.5, §11.4): a stray `radius` on a rabbet
+// is a hard validation error, not a silently-ignored field.
+const arrisFields = {
+  id: idSchema('epf_'),
+  edge: z.enum(['top', 'bottom', 'left', 'right']), // board-local, per §3.4
+  face: z.enum(['front', 'back']), // front = +thickness/+z, back = −thickness/−z
+  // Which bit-store entry filled these dims — a semantic slug ('bit_roundover_14'),
+  // NOT a prefixed id, and NOT dereferenced by the evaluator. Nullable.
+  bit_id: z.string().nullable().default(null),
+}
+
+// A single leg of a `compound` profile path (chunk 17.1). Segments chain from the
+// profile's `start` point; each ends at `to`. A `line` is straight; an `arc` sweeps
+// around `center` in the given direction (its radius is |start−center|, and it lands
+// exactly on `to` — data with a mismatched |to−center| gets a small end kink, so a bit's
+// arcs should share a consistent radius). All coordinates are ARRIS-FRAME (u, v).
+export const ProfileSegmentSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('line'), to: z.tuple([z.number(), z.number()]) }).strict(),
+  z
+    .object({
+      kind: z.literal('arc'),
+      to: z.tuple([z.number(), z.number()]),
+      center: z.tuple([z.number(), z.number()]),
+      dir: z.enum(['cw', 'ccw']),
+    })
+    .strict(),
+])
+export type ProfileSegment = z.infer<typeof ProfileSegmentSchema>
+
+export const EdgeProfileSchema = z.discriminatedUnion('profile', [
+  z.object({ profile: z.literal('roundover'), radius: z.number().positive(), ...arrisFields }).strict(),
+  z.object({ profile: z.literal('cove'), radius: z.number().positive(), ...arrisFields }).strict(),
+  z.object({ profile: z.literal('ogee'), radius: z.number().positive(), ...arrisFields }).strict(),
+  z.object({ profile: z.literal('chamfer'), width: z.number().positive(), ...arrisFields }).strict(), // 45° implied (v1)
+  z.object({ profile: z.literal('rabbet'), width: z.number().positive(), depth: z.number().positive(), ...arrisFields }).strict(),
+  // §3.5 chunk 17.1 — an arbitrary molding profile (picture-frame, classical, cove+bead…)
+  // as DATA rather than a named primitive: an arris-frame polyline path the carve sweeps
+  // verbatim. `start` is on the v = 0 face (start[1] = 0); the last segment ends on the
+  // u = 0 wall (to[0] = 0). `label` is the bit's human name, copied at paint time so the
+  // cut list + inspector stay legible without a DB lookup (the geometry is denormalized
+  // like every other profile). See geometry/edgeProfiles.ts for the shape invariants.
+  z
+    .object({
+      profile: z.literal('compound'),
+      start: z.tuple([z.number(), z.number()]),
+      segments: z.array(ProfileSegmentSchema).min(1),
+      label: z.string().optional(),
+      ...arrisFields,
+    })
+    .strict(),
+])
+export type EdgeProfile = z.infer<typeof EdgeProfileSchema>
+
 // §3.1 note: "glue_up.max_strip_width defaults to 5.5"" — also the cut list's threshold
 // for WIDE_PANEL_NO_GLUEUP (a panel wider than this with no glue_up set), so it's exported
 // rather than inlined twice.
@@ -84,6 +145,7 @@ export const BoardSchema = z
     locked: z.boolean().default(false),
     glue_up: GlueUpSchema.nullable().default(null),
     edge_grooves: z.array(EdgeGrooveSchema).default([]),
+    edge_profiles: z.array(EdgeProfileSchema).default([]), // §3.5 router mode
     panel_fit: PanelFitSchema.nullable().default(null),
   })
   .strict()

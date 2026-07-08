@@ -31,11 +31,15 @@ export type CutFeatureKind =
   | 'finger' // box-joint finger/socket band (both boards)
   | 'tail_socket' // dovetail: tail-shaped void removed from a (pin board)
   | 'pin_socket' // dovetail: pin-shaped void + edge notches removed from b (tail board)
+  // chunk 17 — router mode (docs/chunk17-design.md). One kind for all five profile
+  // types; the concrete type is recoverable via CutFeature.edgeProfileId → board.edge_profiles.
+  | 'edge_profile'
 
 export interface CutFeature {
   id: number // matches the per-triangle provenance index
   kind: CutFeatureKind
-  jointId?: string // undefined for board-level features (base, edge groove)
+  jointId?: string // undefined for board-level features (base, edge groove, edge profile)
+  edgeProfileId?: string // which board.edge_profiles[] entry (chunk 17), mirroring jointId
 }
 
 // A cutter prism expressed in the TARGET board's LOCAL frame (box centred at the
@@ -62,9 +66,32 @@ export interface CutterFrustum {
   jointId?: string
 }
 
-export type Cutter = CutterBox | CutterFrustum
+// A swept-profile cutter (docs/chunk17-design.md §3): a 2D cross-section polyline (the
+// removed profile, in ARRIS-FRAME (u, v) — see eval/profiles.ts) extruded along one
+// arris. The FIRST non-box/non-frustum cutter: its cross-section is curved
+// (roundover/cove/ogee) or a multi-segment step (rabbet), so neither CutterBox nor
+// CutterFrustum fits. Storing `curve` in arris-frame (sign-free) is the key
+// simplification — `axis` + `corner` resolve it onto one of the 8 arrises at build time,
+// exactly as CutterFrustum separates "which axes" from "what shape".
+export interface CutterProfile {
+  profileCut: true // discriminant: `'profileCut' in cutter`
+  axis: 0 | 1 // sweep axis (0 = x/length for top/bottom, 1 = y/width for left/right)
+  span: [number, number] // full arris run (exact); OVERCUT is added at build time, not baked in
+  corner: [1 | -1, 1 | -1] // [u sign, v sign]: which extreme of [uAxis, vAxis] the arris sits at
+  curve: [number, number][] // profileCurve() output, arris-frame (u, v), sign-free
+  // Board half-extents along [uAxis, vAxis] — the arris sits at corner·half on each. Needed
+  // so cutterBounds is self-contained (the curve is arris-relative). Board-derived, so it
+  // never enters carveKey (board.dims already does).
+  half: [number, number]
+  feature: CutFeatureKind // 'edge_profile' for all five types
+  edgeProfileId?: string // provenance: which board.edge_profiles[] entry
+  jointId?: string // always undefined here; kept for Cutter-union uniformity
+}
+
+export type Cutter = CutterBox | CutterFrustum | CutterProfile
 
 export const isFrustum = (c: Cutter): c is CutterFrustum => 'frustum' in c
+export const isProfile = (c: Cutter): c is CutterProfile => 'profileCut' in c
 
 // Rect axes for a frustum's sweep axis: the other two axes in ascending order.
 export const frustumRectAxes = (axis: 0 | 1 | 2): [number, number] =>
@@ -91,6 +118,28 @@ export function frustumCorners(f: CutterFrustum): Vec3[] {
 // Conservative local-frame bounds of any cutter (frustum bounds = station span × the
 // union of its two rects) — containment tests and broad checks.
 export function cutterBounds(c: Cutter): AABB {
+  if (isProfile(c)) {
+    // Sweep-axis range = span. Each cross axis runs from the arris (corner·half) inward
+    // by the curve's max extent on that axis — per the §2 invariants this AABB contains
+    // the cutter's entire IN-BOARD volume. (The built manifold's overcut cap pokes past
+    // the flush faces, outside the board — irrelevant to the on-board overlap check these
+    // bounds exist for, so it is deliberately excluded.)
+    const [u, v] = frustumRectAxes(c.axis)
+    const maxU = Math.max(...c.curve.map((p) => p[0]))
+    const maxV = Math.max(...c.curve.map((p) => p[1]))
+    const min: Vec3 = [0, 0, 0]
+    const max: Vec3 = [0, 0, 0]
+    min[c.axis] = c.span[0]
+    max[c.axis] = c.span[1]
+    // Arris at corner[0]·half[0]; the cut reaches back toward the origin by maxU.
+    const [uArris, uInner] = c.corner[0] > 0 ? [c.half[0], c.half[0] - maxU] : [-c.half[0], -c.half[0] + maxU]
+    const [vArris, vInner] = c.corner[1] > 0 ? [c.half[1], c.half[1] - maxV] : [-c.half[1], -c.half[1] + maxV]
+    min[u] = Math.min(uArris, uInner)
+    max[u] = Math.max(uArris, uInner)
+    min[v] = Math.min(vArris, vInner)
+    max[v] = Math.max(vArris, vInner)
+    return { min, max }
+  }
   if (!isFrustum(c)) return { min: c.min, max: c.max }
   const [u, v] = frustumRectAxes(c.axis)
   const min: Vec3 = [0, 0, 0]

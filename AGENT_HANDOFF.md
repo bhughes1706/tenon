@@ -1,10 +1,8 @@
 # Tenon — Agent Handoff Document
 
-**Date:** 2026-07-07 (chunk 16 COMPLETE — box joint + dovetail. §15 governs chunk
+**Date:** 2026-07-07 (chunk 17 COMPLETE — router mode / edge profiles. §15 governs chunk
 numbering, not this file's section order — see the completion log below for what
-"chunk N" maps to. **Next unbuilt feature: chunk 17, router mode / edge profiles**
-(`docs/chunk17-design.md` has the full derivation, verified 2026-07-07, ready to
-implement). Chunk 18 = bid engine.)  
+"chunk N" maps to. **Next unbuilt feature: chunk 18, bid engine** — see spec §15/§17.)  
 **Repo:** https://github.com/bhughes1706/tenon  
 **Spec:** `docs/tenon-spec-v0.4.md` (always load this — it is the ground truth)
 
@@ -18,6 +16,37 @@ implement). Chunk 18 = bid engine.)
 
 ## Completion log (one paragraph per chunk — see docs/chunkN-design.md for full detail)
 
+- **✅ Chunk 17 (2026-07-07) — router mode / edge profiles.** The first curved-cross-
+  section cutter: `CutterProfile` (`eval/types.ts`) joins `CutterBox`/`CutterFrustum` — a
+  2D profile polyline in ARRIS-FRAME (u,v) extruded along one of the 8 arrises. Pure curve
+  math in `eval/profiles.ts` (`profileCurve`, `PROFILE_FACETS = 16`: roundover/cove 90°
+  arc, ogee two r/2 arcs sharing a midpoint, chamfer/rabbet straight) per
+  `docs/chunk17-design.md §2`, verbatim from the verified derivation. **Placement (the
+  §3 winding gotcha) was implemented via an explicit affine `Manifold.transform(Mat4)`
+  rather than Euler `rotate`:** extrude centred along local z, then map (X,Y,Z)→(uAxis,
+  vAxis, sweep) with a proper-rotation matrix whose z-sign is `+1` for sweep axis 0 and
+  `−1` for axis 1 (chosen so det=+1 — axis 1's natural assignment is a reflection).
+  Winding is normalized by signed area before extrude so `Manifold.extrude`'s Positive
+  fill keeps the polygon. `CutterProfile` carries `half: [halfU, halfV]` (board-derived,
+  NOT in carveKey) so `cutterBounds` stays self-contained for the `PROFILE_JOINT_OVERLAP`
+  check. Validation in `geometry/edgeProfiles.ts` (`profileExtents`, `checkEdgeProfiles`:
+  depth/reach overrun, duplicate arris, panel_fit rejection) wired into `validators.ts`'s
+  post-batch board-reconstruction pass. `EdgeProfileSchema` is a discriminated union on
+  `profile` (stray field = hard error). Server: `migrations/002_bits.sql` (11 seeded bits,
+  forward-only runner) + `routes/bits.ts` (list/get/**post/patch** — the store takes
+  writes, unlike species). Web: `bitsApi.ts` (cached + `bitToEdgeProfile` mapping),
+  `viewport/arrisPick.ts` (pure `pickArris`, tested), `lib/routerApply.ts` (toggle paint
+  → one `update_board`), router mode in `modelStore`/`registry`/`viewportCommands` (`E`),
+  `ui/RouterPanel.tsx` (bit picker + add-bit), Inspector routed-edges section, Viewport
+  paint branch. **Carve verified end-to-end** (`profiles.carve.test.ts`): all 8 arrises ×
+  ogee remove the exact analytic cross-section area from the correct corner only, chamfer
+  matches w²/2, adjacent profiles union cleanly, overlap warning fires/silent, memo
+  invalidates only the edited board. Cutlist notes are arris-independent (collapse to
+  `×N`). Out of scope (§8): stopped routing, non-45° chamfer, miter blending, live preview
+  dialog (the viewport carve IS the preview). **Env note:** `modelService.test.ts` can't
+  run here — better-sqlite3's native binary is built for Node 22 (ABI 127) but the active
+  node is v20 (ABI 115); it throws at `new Database` before any chunk-17 code. Unrelated
+  to this chunk; migration SQL was validated with the `sqlite3` CLI instead.
 - **✅ Chunk 16 (2026-07-07) — box joint + dovetail spacing solver + carve.** Pure
   spacing solvers (`eval/joints/spacing.ts` `boxSpacing`/`dovetailSpacing`), two new
   JointFns (`boxJoint.ts`, `dovetail.ts`), and corner-frame preconditions
